@@ -1,0 +1,23 @@
+[package]
+name = "minesweeper"
+version = "50.0.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+description = "A Bevy recreation of GNOME Mines"
+
+[dependencies]
+bevy = "0.19.0"
+bevy_egui = "0.41.1"
+dirs = "6.0"
+egui_extras = { version = "0.35", features = ["svg", "svg_text"] }
+rand = "0.9"
+resvg = { version = "0.45", default-features = false }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+winit = { version = "0.30.13", default-features = false }
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
