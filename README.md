@@ -16,6 +16,8 @@ mode GUI:
 - `SettingsPlugin` and `SettingsGroup` persist reflected settings as TOML.
 - Pointer observers handle left-click, right-click, and touch long-press.
 - Delayed Commands synchronize newly spawned number fields.
+- A high-contrast eight-color palette distinguishes adjacent-mine counts.
+- `UiTransform` transitions animate screens, dialogs, pause state, and tile feedback.
 
 ## Run
 

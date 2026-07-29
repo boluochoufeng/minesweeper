@@ -14,10 +14,10 @@ use bevy::settings::SettingsPlugin;
 use bevy::window::{ExitCondition, WindowResolution};
 use storage::{Difficulty, PersistentData, Settings};
 use ui::{
-    MinesApp, NativeWindowState, apply_window_settings, close_and_save, feathers_plugins,
-    initialize_number_inputs, keyboard_shortcuts, mines_theme, native_ui_observers,
-    native_window_sync, rebuild_ui, schedule_settings_save, setup_assets, startup_scene,
-    sync_setting_widgets, update_clock_text, window_focus_pause,
+    MinesApp, NativeWindowState, animate_ui_transitions, apply_window_settings, close_and_save,
+    feathers_plugins, initialize_number_inputs, keyboard_shortcuts, mines_theme,
+    native_ui_observers, native_window_sync, rebuild_ui, schedule_settings_save, setup_assets,
+    startup_scene, sync_setting_widgets, update_clock_text, window_focus_pause,
 };
 
 fn main() {
@@ -65,6 +65,7 @@ fn main() {
                 close_and_save,
                 native_window_sync,
                 rebuild_ui,
+                animate_ui_transitions,
                 initialize_number_inputs,
                 sync_setting_widgets,
                 update_clock_text,

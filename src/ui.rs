@@ -28,7 +28,7 @@ use bevy::{
     window::{PrimaryWindow, WindowCloseRequested, WindowFocused},
 };
 use rand::rng;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
 use winit::window::Icon;
 
@@ -39,6 +39,16 @@ const THEMES: [(&str, &str); 4] = [
     ("modern", "Modern"),
 ];
 const LONG_PRESS: Duration = Duration::from_millis(500);
+const NUMBER_COLORS: [(&str, [u8; 3]); 8] = [
+    ("#1a5fb4", [0x1a, 0x5f, 0xb4]),
+    ("#218b55", [0x21, 0x8b, 0x55]),
+    ("#c01c28", [0xc0, 0x1c, 0x28]),
+    ("#613583", [0x61, 0x35, 0x83]),
+    ("#a34700", [0xa3, 0x47, 0x00]),
+    ("#087990", [0x08, 0x79, 0x90]),
+    ("#9c2b75", [0x9c, 0x2b, 0x75]),
+    ("#3d3846", [0x3d, 0x38, 0x46]),
+];
 
 const TILE_SVGS: [[&[u8]; 13]; 4] = [
     [
@@ -159,6 +169,9 @@ pub struct MinesApp {
     dialog: Option<Dialog>,
     help_page: usize,
     layout_dirty: bool,
+    screen_transition: bool,
+    dialog_transition: bool,
+    animated_cells: BTreeSet<usize>,
 }
 
 impl MinesApp {
@@ -180,6 +193,9 @@ impl MinesApp {
             dialog: None,
             help_page: 0,
             layout_dirty: true,
+            screen_transition: true,
+            dialog_transition: false,
+            animated_cells: BTreeSet::new(),
         };
         if let Some(difficulty) = cli_difficulty {
             app.start_game(difficulty, settings);
@@ -200,6 +216,9 @@ impl MinesApp {
         self.screen = Screen::Game;
         self.dialog = None;
         self.layout_dirty = true;
+        self.screen_transition = true;
+        self.dialog_transition = false;
+        self.animated_cells.clear();
     }
 
     fn execute(&mut self, action: PendingAction, settings: &mut Settings) {
@@ -213,6 +232,9 @@ impl MinesApp {
                 self.pause_requested = false;
                 self.dialog = None;
                 self.layout_dirty = true;
+                self.screen_transition = true;
+                self.dialog_transition = false;
+                self.animated_cells.clear();
             }
             PendingAction::Start(difficulty) => self.start_game(difficulty, settings),
             PendingAction::Restart => self.start_game(settings.difficulty, settings),
@@ -233,6 +255,7 @@ impl MinesApp {
             self.set_paused(true, false);
             self.dialog = Some(Dialog::Confirm(state));
             self.layout_dirty = true;
+            self.dialog_transition = true;
         } else {
             self.execute(action, settings);
         }
@@ -271,6 +294,7 @@ impl MinesApp {
         let Some(board) = self.board.as_mut() else {
             return;
         };
+        let previous_cells = board.cells.clone();
         let changed = match action {
             CellAction::Reveal(x, y) => {
                 let changed = board.reveal(
@@ -298,6 +322,15 @@ impl MinesApp {
         };
         if changed {
             self.layout_dirty = true;
+            self.animated_cells = previous_cells
+                .iter()
+                .zip(&board.cells)
+                .enumerate()
+                .filter_map(|(index, (before, after))| {
+                    (before.revealed != after.revealed || before.mark != after.mark)
+                        .then_some(index)
+                })
+                .collect();
         }
         self.process_outcome(settings);
     }
@@ -323,6 +356,7 @@ impl MinesApp {
                     .add_score(board.width, board.height, board.mine_count, seconds);
                 self.dialog = Some(Dialog::Victory);
                 self.layout_dirty = true;
+                self.dialog_transition = true;
             }
         }
     }
@@ -365,6 +399,98 @@ struct ActionTarget {
 #[derive(Component, Default, Clone)]
 struct CellTarget {
     index: usize,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum TransitionEasing {
+    #[default]
+    CubicOut,
+    BackOut,
+}
+
+#[derive(Component, Debug, Clone, Copy)]
+pub(crate) struct UiTransition {
+    elapsed: f32,
+    delay: f32,
+    duration: f32,
+    from_scale: f32,
+    from_y: f32,
+    easing: TransitionEasing,
+}
+
+impl Default for UiTransition {
+    fn default() -> Self {
+        Self::none()
+    }
+}
+
+impl UiTransition {
+    const fn none() -> Self {
+        Self {
+            elapsed: 0.0,
+            delay: 0.0,
+            duration: 0.0,
+            from_scale: 1.0,
+            from_y: 0.0,
+            easing: TransitionEasing::CubicOut,
+        }
+    }
+
+    const fn screen(enabled: bool) -> Self {
+        if enabled {
+            Self {
+                elapsed: 0.0,
+                delay: 0.0,
+                duration: 0.24,
+                from_scale: 0.985,
+                from_y: 16.0,
+                easing: TransitionEasing::CubicOut,
+            }
+        } else {
+            Self::none()
+        }
+    }
+
+    const fn dialog(enabled: bool) -> Self {
+        if enabled {
+            Self {
+                elapsed: 0.0,
+                delay: 0.025,
+                duration: 0.22,
+                from_scale: 0.92,
+                from_y: 12.0,
+                easing: TransitionEasing::BackOut,
+            }
+        } else {
+            Self::none()
+        }
+    }
+
+    const fn cell(enabled: bool, exploded: bool) -> Self {
+        if enabled {
+            Self {
+                elapsed: 0.0,
+                delay: 0.0,
+                duration: if exploded { 0.32 } else { 0.18 },
+                from_scale: if exploded { 0.52 } else { 0.72 },
+                from_y: 0.0,
+                easing: TransitionEasing::BackOut,
+            }
+        } else {
+            Self::none()
+        }
+    }
+
+    const fn pause() -> Self {
+        Self {
+            elapsed: 0.0,
+            delay: 0.0,
+            duration: 0.2,
+            from_scale: 0.82,
+            from_y: 8.0,
+            easing: TransitionEasing::BackOut,
+        }
+    }
 }
 
 #[derive(Component, Default, Clone)]
@@ -496,6 +622,9 @@ struct UiSnapshot {
     viewport_ratio: f32,
     settings: Settings,
     scores: Vec<crate::storage::Score>,
+    screen_transition: bool,
+    dialog_transition: bool,
+    animated_cells: BTreeSet<usize>,
 }
 
 pub fn feathers_plugins() -> FeathersPlugins {
@@ -571,10 +700,15 @@ pub fn setup_assets(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
         .map(|theme| {
             theme
                 .iter()
-                .map(|bytes| images.add(svg_image(bytes, 128, &svg_options)))
+                .enumerate()
+                .map(|(tile_index, bytes)| {
+                    set_number_color(&mut svg_options, (tile_index < 8).then_some(tile_index));
+                    images.add(svg_image(bytes, 128, &svg_options))
+                })
                 .collect()
         })
         .collect();
+    set_number_color(&mut svg_options, None);
     let flag = images.add(svg_image(
         include_bytes!("../assets/icons/flag-symbolic.svg"),
         64,
@@ -589,6 +723,13 @@ pub fn setup_assets(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
         themes,
         flag,
         stopwatch,
+    });
+}
+
+fn set_number_color(options: &mut resvg::usvg::Options<'_>, number_index: Option<usize>) {
+    options.style_sheet = number_index.map(|index| {
+        let color = NUMBER_COLORS[index].0;
+        format!("text, tspan, path {{ fill: {color} !important; }}")
     });
 }
 
@@ -652,6 +793,9 @@ pub fn rebuild_ui(world: &mut World) {
             viewport_ratio,
             settings: world.resource::<Settings>().clone(),
             scores: app.persistent.scores.clone(),
+            screen_transition: app.screen_transition,
+            dialog_transition: app.dialog_transition,
+            animated_cells: app.animated_cells.clone(),
         }
     };
     let assets = world.resource::<ThemeAssets>().clone();
@@ -660,13 +804,18 @@ pub fn rebuild_ui(world: &mut World) {
         .expect("native Mines UI scene should resolve")
         .id();
     world.resource_mut::<UiRuntime>().root = Some(root);
-    world.resource_mut::<MinesApp>().layout_dirty = false;
+    let mut app = world.resource_mut::<MinesApp>();
+    app.layout_dirty = false;
+    app.screen_transition = false;
+    app.dialog_transition = false;
+    app.animated_cells.clear();
 }
 
 fn app_scene(snapshot: UiSnapshot, assets: ThemeAssets) -> impl Scene {
     let header = header_scene(&snapshot);
     let content = screen_scene(&snapshot, &assets);
     let dialog = dialog_scene(&snapshot, &assets);
+    let transition = UiTransition::screen(snapshot.screen_transition);
     bsn! {
         UiRoot
         Node {
@@ -686,6 +835,14 @@ fn app_scene(snapshot: UiSnapshot, assets: ThemeAssets) -> impl Scene {
                     padding: UiRect::all(px(20)),
                     align_items: AlignItems::Center,
                     justify_content: JustifyContent::Center,
+                }
+                UiTransition {
+                    elapsed: {transition.elapsed},
+                    delay: {transition.delay},
+                    duration: {transition.duration},
+                    from_scale: {transition.from_scale},
+                    from_y: {transition.from_y},
+                    easing: {transition.easing},
                 }
                 Children [{content}]
             ),
@@ -970,6 +1127,7 @@ fn game_scene(snapshot: &UiSnapshot, assets: &ThemeAssets) -> impl Scene {
         (Val::Auto, percent(100))
     };
     let status = bsn_list![status_scene(snapshot, assets)];
+    let pause_transition = UiTransition::pause();
     let pause_overlay: Box<dyn SceneList> = if snapshot.paused {
         Box::new(bsn_list![
             (
@@ -988,6 +1146,14 @@ fn game_scene(snapshot: &UiSnapshot, assets: &ThemeAssets) -> impl Scene {
                     Text("Paused")
                     TextFont { font_size: FontSize::Px(44.0) }
                     TextColor(Color::srgb(0.18, 0.18, 0.20))
+                    UiTransition {
+                        elapsed: {pause_transition.elapsed},
+                        delay: {pause_transition.delay},
+                        duration: {pause_transition.duration},
+                        from_scale: {pause_transition.from_scale},
+                        from_y: {pause_transition.from_y},
+                        easing: {pause_transition.easing},
+                    }
                 )]
             )
         ])
@@ -1067,21 +1233,40 @@ fn cell_scene(snapshot: &UiSnapshot, index: usize, textures: &[Handle<Image>]) -
     } else {
         Color::srgb(0.66, 0.66, 0.66)
     };
-    let image: Box<dyn SceneList> = tile_graphic(board, index)
-        .map(|graphic| {
-            let handle = textures[graphic].clone();
-            Box::new(bsn_list![
-                (
-                    ImageNode { image: {handle} }
-                    Node {
-                        width: percent(100),
-                        height: percent(100),
-                    }
-                    Pickable::IGNORE
-                )
-            ]) as Box<dyn SceneList>
-        })
-        .unwrap_or_else(|| Box::new(bsn_list![]));
+    let transition = UiTransition::cell(
+        snapshot.animated_cells.contains(&index),
+        board.exploded_cell == Some(index),
+    );
+    let visual: Box<dyn SceneList> = if cell.revealed && !cell.mine && cell.adjacent > 0 {
+        let number = cell.adjacent.to_string();
+        let color = number_color(cell.adjacent);
+        let font_size = FontSize::VMin(60.0 / board.width.max(board.height).max(1) as f32);
+        Box::new(bsn_list![
+            (
+                Text({number})
+                TextFont { font_size: {font_size} }
+                TextColor({color})
+                Pickable::IGNORE
+            )
+        ])
+    } else {
+        tile_graphic(board, index).map_or_else(
+            || Box::new(bsn_list![]) as Box<dyn SceneList>,
+            |graphic| {
+                let handle = textures[graphic].clone();
+                Box::new(bsn_list![
+                    (
+                        ImageNode { image: {handle} }
+                        Node {
+                            width: percent(100),
+                            height: percent(100),
+                        }
+                        Pickable::IGNORE
+                    )
+                ]) as Box<dyn SceneList>
+            },
+        )
+    };
 
     bsn! {
         CellTarget { index }
@@ -1097,8 +1282,25 @@ fn cell_scene(snapshot: &UiSnapshot, index: usize, textures: &[Handle<Image>]) -
         }
         BackgroundColor({background})
         BorderColor::all(border_color)
-        Children [{image}]
+        UiTransition {
+            elapsed: {transition.elapsed},
+            delay: {transition.delay},
+            duration: {transition.duration},
+            from_scale: {transition.from_scale},
+            from_y: {transition.from_y},
+            easing: {transition.easing},
+        }
+        Children [{visual}]
     }
+}
+
+fn number_color(number: u8) -> Color {
+    let [red, green, blue] = NUMBER_COLORS[(number.clamp(1, 8) - 1) as usize].1;
+    Color::srgb(
+        red as f32 / 255.0,
+        green as f32 / 255.0,
+        blue as f32 / 255.0,
+    )
 }
 
 fn tile_graphic(board: &Board, index: usize) -> Option<usize> {
@@ -1191,20 +1393,27 @@ fn dialog_scene(snapshot: &UiSnapshot, assets: &ThemeAssets) -> Box<dyn SceneLis
     let Some(dialog) = snapshot.dialog else {
         return Box::new(bsn_list![]);
     };
+    let animate = snapshot.dialog_transition;
     match dialog {
-        Dialog::Menu => menu_dialog(snapshot),
-        Dialog::Confirm(_) => confirm_dialog(),
-        Dialog::Scores => scores_dialog(snapshot),
-        Dialog::Appearance => appearance_dialog(snapshot, assets),
-        Dialog::Shortcuts => shortcuts_dialog(),
-        Dialog::Help => help_dialog(snapshot),
-        Dialog::About => about_dialog(),
-        Dialog::Victory => victory_dialog(snapshot),
+        Dialog::Menu => menu_dialog(snapshot, animate),
+        Dialog::Confirm(_) => confirm_dialog(animate),
+        Dialog::Scores => scores_dialog(snapshot, animate),
+        Dialog::Appearance => appearance_dialog(snapshot, assets, animate),
+        Dialog::Shortcuts => shortcuts_dialog(animate),
+        Dialog::Help => help_dialog(snapshot, animate),
+        Dialog::About => about_dialog(animate),
+        Dialog::Victory => victory_dialog(snapshot, animate),
     }
 }
 
-fn modal(title: &str, body: Box<dyn SceneList>, actions: Vec<Box<dyn SceneList>>) -> impl Scene {
+fn modal(
+    title: &str,
+    body: Box<dyn SceneList>,
+    actions: Vec<Box<dyn SceneList>>,
+    animate: bool,
+) -> impl Scene {
     let title = title.to_owned();
+    let transition = UiTransition::dialog(animate);
     bsn! {
         Node {
             position_type: PositionType::Absolute,
@@ -1232,6 +1441,14 @@ fn modal(title: &str, body: Box<dyn SceneList>, actions: Vec<Box<dyn SceneList>>
             }
             BackgroundColor(Color::srgb(0.98, 0.98, 0.98))
             BorderColor::all(Color::srgb(0.67, 0.67, 0.67))
+            UiTransition {
+                elapsed: {transition.elapsed},
+                delay: {transition.delay},
+                duration: {transition.duration},
+                from_scale: {transition.from_scale},
+                from_y: {transition.from_y},
+                easing: {transition.easing},
+            }
             Children [
                 (
                     Text({title})
@@ -1262,7 +1479,7 @@ fn modal(title: &str, body: Box<dyn SceneList>, actions: Vec<Box<dyn SceneList>>
     }
 }
 
-fn menu_dialog(snapshot: &UiSnapshot) -> Box<dyn SceneList> {
+fn menu_dialog(snapshot: &UiSnapshot, animate: bool) -> Box<dyn SceneList> {
     let toggles = vec![
         setting_checkbox("Question Marks", SettingKey::QuestionMarks),
         setting_checkbox("Auto-clear on Flags", SettingKey::AutoClear),
@@ -1322,7 +1539,7 @@ fn menu_dialog(snapshot: &UiSnapshot) -> Box<dyn SceneList> {
         boxed_button("Quit", UiAction::Quit, ButtonVariant::Plain),
         boxed_button("Close", UiAction::CloseDialog, ButtonVariant::Primary),
     ];
-    Box::new(bsn_list![modal("Menu", body, actions)])
+    Box::new(bsn_list![modal("Menu", body, actions, animate)])
 }
 
 fn setting_checkbox(label: &str, key: SettingKey) -> impl Scene {
@@ -1337,7 +1554,7 @@ fn setting_checkbox(label: &str, key: SettingKey) -> impl Scene {
     }
 }
 
-fn confirm_dialog() -> Box<dyn SceneList> {
+fn confirm_dialog(animate: bool) -> Box<dyn SceneList> {
     let body = Box::new(bsn_list![
         (
             Text("The current game will be lost.")
@@ -1353,10 +1570,15 @@ fn confirm_dialog() -> Box<dyn SceneList> {
             ButtonVariant::Primary,
         ),
     ];
-    Box::new(bsn_list![modal("Start a New Game?", body, actions)])
+    Box::new(bsn_list![modal(
+        "Start a New Game?",
+        body,
+        actions,
+        animate
+    )])
 }
 
-fn scores_dialog(snapshot: &UiSnapshot) -> Box<dyn SceneList> {
+fn scores_dialog(snapshot: &UiSnapshot, animate: bool) -> Box<dyn SceneList> {
     let mut groups: BTreeMap<(usize, usize, usize), Vec<_>> = BTreeMap::new();
     for score in &snapshot.scores {
         groups
@@ -1392,10 +1614,14 @@ fn scores_dialog(snapshot: &UiSnapshot) -> Box<dyn SceneList> {
         UiAction::CloseDialog,
         ButtonVariant::Primary,
     )];
-    Box::new(bsn_list![modal("Scores", body, actions)])
+    Box::new(bsn_list![modal("Scores", body, actions, animate)])
 }
 
-fn appearance_dialog(snapshot: &UiSnapshot, assets: &ThemeAssets) -> Box<dyn SceneList> {
+fn appearance_dialog(
+    snapshot: &UiSnapshot,
+    assets: &ThemeAssets,
+    animate: bool,
+) -> Box<dyn SceneList> {
     let cards: Vec<_> = THEMES
         .iter()
         .enumerate()
@@ -1423,7 +1649,7 @@ fn appearance_dialog(snapshot: &UiSnapshot, assets: &ThemeAssets) -> Box<dyn Sce
         UiAction::CloseDialog,
         ButtonVariant::Primary,
     )];
-    Box::new(bsn_list![modal("Appearance", body, actions)])
+    Box::new(bsn_list![modal("Appearance", body, actions, animate)])
 }
 
 fn theme_card(index: usize, label: &str, selected: bool, image: Handle<Image>) -> impl Scene {
@@ -1463,7 +1689,7 @@ fn theme_card(index: usize, label: &str, selected: bool, image: Handle<Image>) -
     }
 }
 
-fn shortcuts_dialog() -> Box<dyn SceneList> {
+fn shortcuts_dialog(animate: bool) -> Box<dyn SceneList> {
     let text = "\
 New Game                 Ctrl+N
 Restart                  Ctrl+R
@@ -1489,7 +1715,12 @@ Flag                     Ctrl+Space";
         UiAction::CloseDialog,
         ButtonVariant::Primary,
     )];
-    Box::new(bsn_list![modal("Keyboard Shortcuts", body, actions)])
+    Box::new(bsn_list![modal(
+        "Keyboard Shortcuts",
+        body,
+        actions,
+        animate
+    )])
 }
 
 const HELP_PAGES: [(&str, &str); 4] = [
@@ -1511,7 +1742,7 @@ const HELP_PAGES: [(&str, &str); 4] = [
     ),
 ];
 
-fn help_dialog(snapshot: &UiSnapshot) -> Box<dyn SceneList> {
+fn help_dialog(snapshot: &UiSnapshot, animate: bool) -> Box<dyn SceneList> {
     let page = snapshot.help_page.min(HELP_PAGES.len() - 1);
     let (title, text) = HELP_PAGES[page];
     let counter = format!("{} of {}", page + 1, HELP_PAGES.len());
@@ -1537,10 +1768,10 @@ fn help_dialog(snapshot: &UiSnapshot) -> Box<dyn SceneList> {
         boxed_button("Next", UiAction::HelpNext, ButtonVariant::Normal),
         boxed_button("Close", UiAction::CloseDialog, ButtonVariant::Primary),
     ];
-    Box::new(bsn_list![modal("Mines Help", body, actions)])
+    Box::new(bsn_list![modal("Mines Help", body, actions, animate)])
 }
 
-fn about_dialog() -> Box<dyn SceneList> {
+fn about_dialog(animate: bool) -> Box<dyn SceneList> {
     let body = Box::new(bsn_list![
         (
             Text("Mines 50.0")
@@ -1563,10 +1794,10 @@ fn about_dialog() -> Box<dyn SceneList> {
         UiAction::CloseDialog,
         ButtonVariant::Primary,
     )];
-    Box::new(bsn_list![modal("About Mines", body, actions)])
+    Box::new(bsn_list![modal("About Mines", body, actions, animate)])
 }
 
-fn victory_dialog(snapshot: &UiSnapshot) -> Box<dyn SceneList> {
+fn victory_dialog(snapshot: &UiSnapshot, animate: bool) -> Box<dyn SceneList> {
     let time = format!(
         "You cleared the minefield in {}.",
         format_time(snapshot.elapsed)
@@ -1595,7 +1826,7 @@ fn victory_dialog(snapshot: &UiSnapshot) -> Box<dyn SceneList> {
             ButtonVariant::Primary,
         ),
     ];
-    Box::new(bsn_list![modal("Victory", body, actions)])
+    Box::new(bsn_list![modal("Victory", body, actions, animate)])
 }
 
 fn action_button(label: &str, action: UiAction, variant: ButtonVariant) -> impl Scene {
@@ -1631,6 +1862,7 @@ fn handle_action(
             app.screen = Screen::Custom;
             app.dialog = None;
             app.layout_dirty = true;
+            app.screen_transition = true;
         }
         UiAction::TogglePause => app.toggle_pause(),
         UiAction::Open(kind) => {
@@ -1643,6 +1875,7 @@ fn handle_action(
                 DialogKind::About => Dialog::About,
             });
             app.layout_dirty = true;
+            app.dialog_transition = true;
         }
         UiAction::CloseDialog => {
             app.dialog = None;
@@ -1675,10 +1908,12 @@ fn handle_action(
         UiAction::HelpPrevious => {
             app.help_page = app.help_page.saturating_sub(1);
             app.layout_dirty = true;
+            app.dialog_transition = true;
         }
         UiAction::HelpNext => {
             app.help_page = (app.help_page + 1).min(HELP_PAGES.len() - 1);
             app.layout_dirty = true;
+            app.dialog_transition = true;
         }
         UiAction::Quit => {
             commands.queue(SaveSettingsSync::IfChanged);
@@ -1886,10 +2121,12 @@ pub fn keyboard_shortcuts(
     if keyboard.just_pressed(KeyCode::F1) {
         app.dialog = Some(Dialog::Help);
         app.layout_dirty = true;
+        app.dialog_transition = true;
     }
     if keyboard.just_pressed(KeyCode::F10) || (ctrl && keyboard.just_pressed(KeyCode::Slash)) {
         app.dialog = Some(Dialog::Menu);
         app.layout_dirty = true;
+        app.dialog_transition = true;
     }
     if keyboard.just_pressed(KeyCode::Escape) {
         if let Some(Dialog::Confirm(state)) = app.dialog {
@@ -1928,6 +2165,7 @@ pub fn keyboard_shortcuts(
         app.screen = Screen::Custom;
         app.dialog = None;
         app.layout_dirty = true;
+        app.screen_transition = true;
     }
 
     if app.dialog.is_some() || app.screen != Screen::Game || app.paused {
@@ -1973,6 +2211,45 @@ pub fn keyboard_shortcuts(
             CellAction::Reveal(x, y)
         };
         app.apply_cell_action(action, &settings);
+    }
+}
+
+pub fn animate_ui_transitions(
+    time: Res<Time>,
+    mut transitions: Query<(Entity, &mut UiTransition, &mut UiTransform)>,
+    mut commands: Commands,
+) {
+    for (entity, mut transition, mut transform) in &mut transitions {
+        if transition.duration <= 0.0 {
+            *transform = UiTransform::IDENTITY;
+            commands.entity(entity).remove::<UiTransition>();
+            continue;
+        }
+
+        transition.elapsed += time.delta_secs();
+        let linear =
+            ((transition.elapsed - transition.delay) / transition.duration).clamp(0.0, 1.0);
+        let eased = transition_easing(linear, transition.easing);
+        let scale = transition.from_scale + (1.0 - transition.from_scale) * eased;
+        let y = transition.from_y * (1.0 - eased);
+        transform.scale = Vec2::splat(scale);
+        transform.translation = Val2::px(0.0, y);
+
+        if linear >= 1.0 {
+            *transform = UiTransform::IDENTITY;
+            commands.entity(entity).remove::<UiTransition>();
+        }
+    }
+}
+
+fn transition_easing(value: f32, easing: TransitionEasing) -> f32 {
+    match easing {
+        TransitionEasing::CubicOut => 1.0 - (1.0 - value).powi(3),
+        TransitionEasing::BackOut => {
+            const OVERSHOOT: f32 = 1.70158;
+            let shifted = value - 1.0;
+            1.0 + (OVERSHOOT + 1.0) * shifted.powi(3) + OVERSHOOT * shifted.powi(2)
+        }
     }
 }
 
@@ -2117,20 +2394,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_legacy_number_svg_rasterizes_text() {
+    fn every_number_svg_uses_the_accessible_palette() {
         let mut options = resvg::usvg::Options::default();
         options.fontdb_mut().load_system_fonts();
-        for (theme_index, theme) in TILE_SVGS.iter().take(3).enumerate() {
+        for (theme_index, theme) in TILE_SVGS.iter().enumerate() {
             for (number_index, svg) in theme.iter().take(8).enumerate() {
+                set_number_color(&mut options, Some(number_index));
                 let image = svg_image(svg, 128, &options);
                 let pixels = image.data.expect("raster image data should be retained");
+                let expected = NUMBER_COLORS[number_index].1;
 
                 assert!(
-                    pixels.chunks_exact(4).any(|pixel| pixel[3] != 0),
-                    "theme {theme_index} number {} rendered as a transparent image",
+                    pixels
+                        .chunks_exact(4)
+                        .any(|pixel| { pixel[0..3] == expected && pixel[3] > 0 }),
+                    "theme {theme_index} number {} did not use its palette color",
                     number_index + 1
                 );
             }
+        }
+    }
+
+    #[test]
+    fn transition_easing_has_exact_endpoints() {
+        for easing in [TransitionEasing::CubicOut, TransitionEasing::BackOut] {
+            assert_eq!(transition_easing(0.0, easing), 0.0);
+            assert!((transition_easing(1.0, easing) - 1.0).abs() < f32::EPSILON);
         }
     }
 }
