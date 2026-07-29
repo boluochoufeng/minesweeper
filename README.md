@@ -6,6 +6,17 @@ automatic clearing on flags, pausing, timing, persistent high scores, four
 upstream themes, keyboard/touch/mouse controls, help, and the original game
 credits.
 
+The interface uses Bevy 0.19's native UI stack rather than an external immediate
+mode GUI:
+
+- `bsn!` and `bsn_list!` define the application shell and dynamic screens.
+- A custom `SceneComponent` defines reusable difficulty cards.
+- Feathers supplies buttons, checkboxes, and number inputs.
+- `EditableText` powers the custom-board fields.
+- `SettingsPlugin` and `SettingsGroup` persist reflected settings as TOML.
+- Pointer observers handle left-click, right-click, and touch long-press.
+- Delayed Commands synchronize newly spawned number fields.
+
 ## Run
 
 ```sh
@@ -29,8 +40,9 @@ Controls match GNOME Mines:
 - Space reveals; Ctrl+Space marks.
 - Ctrl+N changes difficulty, Ctrl+R restarts, and Pause pauses.
 
-Settings and scores are stored in the platform configuration directory under
-`bevy-gnome-mines/data.json`.
+Bevy App Settings stores preferences and window state in the platform
+preferences directory under `org.gnome.Mines/settings.toml`. Scores remain in
+the compatible `bevy-gnome-mines/data.json` file.
 
 ## Licensing and artwork
 

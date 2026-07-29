@@ -6,10 +6,8 @@ license = "GPL-3.0-or-later"
 description = "A Bevy recreation of GNOME Mines"
 
 [dependencies]
-bevy = "0.19.0"
-bevy_egui = "0.41.1"
+bevy = { version = "0.19.0", features = ["bevy_feathers", "bevy_settings"] }
 dirs = "6.0"
-egui_extras = { version = "0.35", features = ["svg", "svg_text"] }
 rand = "0.9"
 resvg = { version = "0.45", default-features = false }
 serde = { version = "1.0", features = ["derive"] }

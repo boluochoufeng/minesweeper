@@ -1,15 +1,35 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Native Bevy 0.19 UI. The interface is built with BSN scenes and Feathers
+// scene components; the board rules remain in the engine-agnostic game module.
 
 use crate::game::{Board, GameClock, Mark, Outcome};
-use crate::storage::{Difficulty, PersistentData};
-use bevy::app::AppExit;
-use bevy::prelude::*;
-use bevy::window::{PrimaryWindow, WindowFocused};
-use bevy_egui::{EguiContexts, egui};
+use crate::storage::{Difficulty, PersistentData, Settings};
+use bevy::{
+    app::AppExit,
+    asset::RenderAssetUsages,
+    feathers::{
+        FeathersPlugins,
+        controls::{
+            ButtonVariant, FeathersButton, FeathersCheckbox, FeathersNumberInput, NumberFormat,
+            NumberInputValue, UpdateNumberInput,
+        },
+        dark_theme::create_dark_theme,
+        theme::{ThemeBackgroundColor, ThemedText, UiTheme},
+        tokens,
+    },
+    input_focus::InputFocus,
+    prelude::*,
+    render::render_resource::{Extent3d, TextureDimension, TextureFormat},
+    settings::{SaveSettingsDeferred, SaveSettingsSync},
+    text::{EditableText, TextEdit},
+    ui::Checked,
+    ui_widgets::{Activate, ValueChange, checkbox_self_update},
+    window::{PrimaryWindow, WindowCloseRequested, WindowFocused},
+};
 use rand::rng;
-use std::borrow::Cow;
 use std::collections::BTreeMap;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use winit::window::Icon;
 
 const THEMES: [(&str, &str); 4] = [
@@ -18,29 +38,95 @@ const THEMES: [(&str, &str); 4] = [
     ("default", "Default"),
     ("modern", "Modern"),
 ];
+const LONG_PRESS: Duration = Duration::from_millis(500);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+const TILE_SVGS: [[&[u8]; 13]; 4] = [
+    [
+        include_bytes!("../assets/themes/bgcolors/1mines.svg"),
+        include_bytes!("../assets/themes/bgcolors/2mines.svg"),
+        include_bytes!("../assets/themes/bgcolors/3mines.svg"),
+        include_bytes!("../assets/themes/bgcolors/4mines.svg"),
+        include_bytes!("../assets/themes/bgcolors/5mines.svg"),
+        include_bytes!("../assets/themes/bgcolors/6mines.svg"),
+        include_bytes!("../assets/themes/bgcolors/7mines.svg"),
+        include_bytes!("../assets/themes/bgcolors/8mines.svg"),
+        include_bytes!("../assets/themes/bgcolors/mine.svg"),
+        include_bytes!("../assets/themes/bgcolors/exploded.svg"),
+        include_bytes!("../assets/themes/bgcolors/flag.svg"),
+        include_bytes!("../assets/themes/bgcolors/incorrect.svg"),
+        include_bytes!("../assets/themes/bgcolors/maybe.svg"),
+    ],
+    [
+        include_bytes!("../assets/themes/classic/1mines.svg"),
+        include_bytes!("../assets/themes/classic/2mines.svg"),
+        include_bytes!("../assets/themes/classic/3mines.svg"),
+        include_bytes!("../assets/themes/classic/4mines.svg"),
+        include_bytes!("../assets/themes/classic/5mines.svg"),
+        include_bytes!("../assets/themes/classic/6mines.svg"),
+        include_bytes!("../assets/themes/classic/7mines.svg"),
+        include_bytes!("../assets/themes/classic/8mines.svg"),
+        include_bytes!("../assets/themes/classic/mine.svg"),
+        include_bytes!("../assets/themes/classic/exploded.svg"),
+        include_bytes!("../assets/themes/classic/flag.svg"),
+        include_bytes!("../assets/themes/classic/incorrect.svg"),
+        include_bytes!("../assets/themes/classic/maybe.svg"),
+    ],
+    [
+        include_bytes!("../assets/themes/default/1mines.svg"),
+        include_bytes!("../assets/themes/default/2mines.svg"),
+        include_bytes!("../assets/themes/default/3mines.svg"),
+        include_bytes!("../assets/themes/default/4mines.svg"),
+        include_bytes!("../assets/themes/default/5mines.svg"),
+        include_bytes!("../assets/themes/default/6mines.svg"),
+        include_bytes!("../assets/themes/default/7mines.svg"),
+        include_bytes!("../assets/themes/default/8mines.svg"),
+        include_bytes!("../assets/themes/default/mine.svg"),
+        include_bytes!("../assets/themes/default/exploded.svg"),
+        include_bytes!("../assets/themes/default/flag.svg"),
+        include_bytes!("../assets/themes/default/incorrect.svg"),
+        include_bytes!("../assets/themes/default/maybe.svg"),
+    ],
+    [
+        include_bytes!("../assets/themes/modern/1mines.svg"),
+        include_bytes!("../assets/themes/modern/2mines.svg"),
+        include_bytes!("../assets/themes/modern/3mines.svg"),
+        include_bytes!("../assets/themes/modern/4mines.svg"),
+        include_bytes!("../assets/themes/modern/5mines.svg"),
+        include_bytes!("../assets/themes/modern/6mines.svg"),
+        include_bytes!("../assets/themes/modern/7mines.svg"),
+        include_bytes!("../assets/themes/modern/8mines.svg"),
+        include_bytes!("../assets/themes/modern/mine.svg"),
+        include_bytes!("../assets/themes/modern/exploded.svg"),
+        include_bytes!("../assets/themes/modern/flag.svg"),
+        include_bytes!("../assets/themes/modern/incorrect.svg"),
+        include_bytes!("../assets/themes/modern/maybe.svg"),
+    ],
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 enum Screen {
+    #[default]
     NewGame,
     Custom,
     Game,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 enum PendingAction {
+    #[default]
     ShowNewGame,
     Start(Difficulty),
     Restart,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ConfirmState {
     action: PendingAction,
     was_paused: bool,
     was_pause_requested: bool,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Dialog {
     Menu,
     Confirm(ConfirmState),
@@ -72,16 +158,15 @@ pub struct MinesApp {
     keyboard_active: bool,
     dialog: Option<Dialog>,
     help_page: usize,
-}
-
-#[derive(Resource, Default)]
-pub struct NativeWindowState {
-    initialized: bool,
-    save_elapsed: f32,
+    layout_dirty: bool,
 }
 
 impl MinesApp {
-    pub fn new(persistent: PersistentData, cli_difficulty: Option<Difficulty>) -> Self {
+    pub fn new(
+        persistent: PersistentData,
+        cli_difficulty: Option<Difficulty>,
+        settings: &mut Settings,
+    ) -> Self {
         let mut app = Self {
             persistent,
             screen: Screen::NewGame,
@@ -94,16 +179,17 @@ impl MinesApp {
             keyboard_active: false,
             dialog: None,
             help_page: 0,
+            layout_dirty: true,
         };
         if let Some(difficulty) = cli_difficulty {
-            app.start_game(difficulty);
+            app.start_game(difficulty, settings);
         }
         app
     }
 
-    fn start_game(&mut self, difficulty: Difficulty) {
-        self.persistent.settings.difficulty = difficulty;
-        let (width, height, mines) = difficulty.dimensions(&self.persistent.settings);
+    fn start_game(&mut self, difficulty: Difficulty, settings: &mut Settings) {
+        settings.difficulty = difficulty;
+        let (width, height, mines) = difficulty.dimensions(settings);
         self.board = Some(Board::new(width, height, mines));
         self.clock = GameClock::default();
         self.paused = false;
@@ -113,10 +199,10 @@ impl MinesApp {
         self.keyboard_active = false;
         self.screen = Screen::Game;
         self.dialog = None;
-        self.persistent.save();
+        self.layout_dirty = true;
     }
 
-    fn execute(&mut self, action: PendingAction) {
+    fn execute(&mut self, action: PendingAction, settings: &mut Settings) {
         match action {
             PendingAction::ShowNewGame => {
                 self.board = None;
@@ -126,16 +212,14 @@ impl MinesApp {
                 self.paused = false;
                 self.pause_requested = false;
                 self.dialog = None;
+                self.layout_dirty = true;
             }
-            PendingAction::Start(difficulty) => self.start_game(difficulty),
-            PendingAction::Restart => {
-                let difficulty = self.persistent.settings.difficulty;
-                self.start_game(difficulty);
-            }
+            PendingAction::Start(difficulty) => self.start_game(difficulty, settings),
+            PendingAction::Restart => self.start_game(settings.difficulty, settings),
         }
     }
 
-    fn request(&mut self, action: PendingAction) {
+    fn request(&mut self, action: PendingAction, settings: &mut Settings) {
         let needs_confirmation = self
             .board
             .as_ref()
@@ -148,8 +232,9 @@ impl MinesApp {
             };
             self.set_paused(true, false);
             self.dialog = Some(Dialog::Confirm(state));
+            self.layout_dirty = true;
         } else {
-            self.execute(action);
+            self.execute(action, settings);
         }
     }
 
@@ -170,24 +255,23 @@ impl MinesApp {
         } else {
             self.clock.resume();
         }
+        self.layout_dirty = true;
     }
 
     fn toggle_pause(&mut self) {
-        if !self.clock.has_started() {
-            return;
+        if self.clock.has_started() {
+            self.set_paused(!self.paused, true);
         }
-        self.set_paused(!self.paused, true);
     }
 
-    fn apply_cell_action(&mut self, action: CellAction) {
+    fn apply_cell_action(&mut self, action: CellAction, settings: &Settings) {
         if self.paused {
             return;
         }
         let Some(board) = self.board.as_mut() else {
             return;
         };
-        let settings = &self.persistent.settings;
-        match action {
+        let changed = match action {
             CellAction::Reveal(x, y) => {
                 let changed = board.reveal(
                     x,
@@ -199,1185 +283,1702 @@ impl MinesApp {
                 if changed && !self.clock.has_started() {
                     self.clock.start();
                 }
+                changed
             }
-            CellAction::Mark(x, y) => {
-                board.cycle_mark(
-                    x,
-                    y,
-                    settings.use_question_marks,
-                    settings.auto_clear_on_flags,
-                    settings.use_autoflag,
-                );
-            }
+            CellAction::Mark(x, y) => board.cycle_mark(
+                x,
+                y,
+                settings.use_question_marks,
+                settings.auto_clear_on_flags,
+                settings.use_autoflag,
+            ),
             CellAction::Chord(x, y) => {
-                board.chord(x, y, settings.auto_clear_on_flags, settings.use_autoflag);
+                board.chord(x, y, settings.auto_clear_on_flags, settings.use_autoflag)
             }
+        };
+        if changed {
+            self.layout_dirty = true;
         }
-        self.process_outcome();
+        self.process_outcome(settings);
     }
 
-    fn process_outcome(&mut self) {
+    fn process_outcome(&mut self, settings: &Settings) {
         let Some(board) = self.board.as_ref() else {
             return;
         };
         match board.outcome {
             Outcome::InProgress => {}
-            Outcome::Lost => self.clock.pause(),
+            Outcome::Lost => {
+                self.clock.pause();
+                self.layout_dirty = true;
+            }
             Outcome::Won => {
                 if matches!(self.dialog, Some(Dialog::Victory)) {
                     return;
                 }
                 self.clock.pause();
                 let seconds = self.clock.elapsed().as_secs_f64().round() as u64;
+                self.persistent.settings = settings.clone();
                 self.persistent
                     .add_score(board.width, board.height, board.mine_count, seconds);
                 self.dialog = Some(Dialog::Victory);
+                self.layout_dirty = true;
             }
         }
     }
+}
 
-    fn open_dialog(&mut self, dialog: Dialog) {
-        self.dialog = Some(dialog);
+#[derive(Resource, Default)]
+pub struct NativeWindowState {
+    initialized: bool,
+    save_elapsed: f32,
+}
+
+#[derive(Resource, Default)]
+pub struct UiRuntime {
+    root: Option<Entity>,
+}
+
+#[derive(Resource, Default)]
+pub struct TouchHold {
+    active: Option<(u64, usize, Instant)>,
+}
+
+#[derive(Resource, Clone)]
+struct ThemeAssets {
+    themes: Vec<Vec<Handle<Image>>>,
+    flag: Handle<Image>,
+    stopwatch: Handle<Image>,
+}
+
+#[derive(Component, Default, Clone)]
+struct UiRoot;
+
+#[derive(Component, Default, Clone)]
+pub(crate) struct ClockText;
+
+#[derive(Component, Default, Clone)]
+struct ActionTarget {
+    action: UiAction,
+}
+
+#[derive(Component, Default, Clone)]
+struct CellTarget {
+    index: usize,
+}
+
+#[derive(Component, Default, Clone)]
+pub(crate) struct SettingTarget {
+    key: SettingKey,
+}
+
+#[derive(Component, Default, Clone)]
+pub(crate) struct CustomInput {
+    field: CustomField,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+enum UiAction {
+    #[default]
+    None,
+    Request(PendingAction),
+    ShowCustom,
+    TogglePause,
+    Open(DialogKind),
+    CloseDialog,
+    ConfirmAccept,
+    ConfirmCancel,
+    Theme(usize),
+    HelpPrevious,
+    HelpNext,
+    Quit,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum DialogKind {
+    Menu,
+    Scores,
+    Appearance,
+    Shortcuts,
+    Help,
+    About,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+enum SettingKey {
+    #[default]
+    QuestionMarks,
+    AutoClear,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+enum CustomField {
+    #[default]
+    Width,
+    Height,
+    Percentage,
+}
+
+#[derive(SceneComponent, Default, Clone)]
+#[scene(DifficultyCardProps)]
+#[derive(Reflect)]
+#[reflect(Component, Default, Clone)]
+struct DifficultyCard;
+
+struct DifficultyCardProps {
+    title: String,
+    subtitle: String,
+    action: UiAction,
+}
+
+impl Default for DifficultyCardProps {
+    fn default() -> Self {
+        Self {
+            title: String::new(),
+            subtitle: String::new(),
+            action: UiAction::None,
+        }
     }
 }
 
-pub fn mines_ui(
-    mut contexts: EguiContexts,
-    mut app: ResMut<MinesApp>,
-    keyboard: Res<ButtonInput<KeyCode>>,
-    mut exit: MessageWriter<AppExit>,
-) -> Result {
-    let ctx = contexts.ctx_mut()?;
-    egui_extras::install_image_loaders(ctx);
-    configure_style(ctx);
-    ctx.request_repaint_after(Duration::from_millis(200));
-
-    handle_keyboard(ctx, &keyboard, &mut app, &mut exit);
-    let mut viewport_ui = egui::Ui::new(
-        ctx.clone(),
-        "viewport".into(),
-        egui::UiBuilder::new()
-            .layer_id(egui::LayerId::background())
-            .max_rect(ctx.viewport_rect()),
-    );
-    render_header(&mut viewport_ui, &mut app, &mut exit);
-
-    egui::CentralPanel::default()
-        .frame(
-            egui::Frame::new()
-                .fill(egui::Color32::from_rgb(246, 245, 244))
-                .inner_margin(18.0),
-        )
-        .show(&mut viewport_ui, |ui| match app.screen {
-            Screen::NewGame => render_new_game(ui, &mut app),
-            Screen::Custom => render_custom_game(ui, &mut app),
-            Screen::Game => render_game(ui, &mut app),
-        });
-
-    render_dialog(ctx, &mut app);
-    Ok(())
-}
-
-fn configure_style(ctx: &egui::Context) {
-    ctx.set_theme(egui::Theme::Light);
-    let mut style = (*ctx.style_of(egui::Theme::Light)).clone();
-    style.spacing.item_spacing = egui::vec2(8.0, 8.0);
-    style.spacing.button_padding = egui::vec2(12.0, 7.0);
-    style.visuals = egui::Visuals::light();
-    style.visuals.panel_fill = egui::Color32::from_rgb(246, 245, 244);
-    style.visuals.window_fill = egui::Color32::from_rgb(250, 249, 247);
-    style.visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(6);
-    style.visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(6);
-    style.visuals.widgets.active.corner_radius = egui::CornerRadius::same(6);
-    style.text_styles.insert(
-        egui::TextStyle::Heading,
-        egui::FontId::new(24.0, egui::FontFamily::Proportional),
-    );
-    ctx.set_style_of(egui::Theme::Light, style);
-}
-
-fn render_header(
-    viewport_ui: &mut egui::Ui,
-    app: &mut MinesApp,
-    exit: &mut MessageWriter<AppExit>,
-) {
-    egui::Panel::top("header")
-        .exact_size(54.0)
-        .frame(
-            egui::Frame::new()
-                .fill(egui::Color32::from_rgb(250, 249, 247))
-                .inner_margin(egui::Margin::symmetric(10, 8))
-                .stroke(egui::Stroke::new(
-                    1.0,
-                    egui::Color32::from_rgb(218, 216, 212),
-                )),
-        )
-        .show(viewport_ui, |ui| {
-            ui.horizontal(|ui| {
-                if app.screen == Screen::Game {
-                    if ui
-                        .button(egui::RichText::new("<").size(20.0).strong())
-                        .on_hover_text("Change Difficulty")
-                        .clicked()
-                    {
-                        app.request(PendingAction::ShowNewGame);
+impl DifficultyCard {
+    fn scene(props: DifficultyCardProps) -> impl Scene {
+        let title = props.title;
+        let subtitle = props.subtitle;
+        let action = props.action;
+        bsn! {
+            @FeathersButton {
+                @caption: bsn! {
+                    Node {
+                        flex_direction: FlexDirection::Column,
+                        align_items: AlignItems::Center,
+                        justify_content: JustifyContent::Center,
+                        row_gap: px(8),
                     }
-                    if ui
-                        .button(egui::RichText::new("↻").size(20.0))
-                        .on_hover_text(
-                            if app
-                                .board
-                                .as_ref()
-                                .is_some_and(|b| b.outcome != Outcome::InProgress)
-                            {
-                                "Play Again"
-                            } else {
-                                "Start Over"
-                            },
+                    Children [
+                        (
+                            Text({title})
+                            TextFont { font_size: FontSize::Px(30.0) }
+                            TextColor(Color::srgb(0.16, 0.16, 0.18))
+                            ThemedText
+                        ),
+                        (
+                            Text({subtitle})
+                            TextFont { font_size: FontSize::Px(19.0) }
+                            TextColor(Color::srgb(0.20, 0.20, 0.22))
+                            ThemedText
                         )
-                        .clicked()
-                    {
-                        app.request(PendingAction::Restart);
-                    }
+                    ]
                 }
-
-                ui.add_space(8.0);
-                ui.label(egui::RichText::new("Mines").strong().size(18.0));
-
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.menu_button(egui::RichText::new("☰").size(20.0), |ui| {
-                        if ui.button("Scores").clicked() {
-                            app.open_dialog(Dialog::Scores);
-                            ui.close();
-                        }
-                        if ui.button("Appearance").clicked() {
-                            app.open_dialog(Dialog::Appearance);
-                            ui.close();
-                        }
-                        ui.separator();
-                        let question_changed = ui
-                            .checkbox(
-                                &mut app.persistent.settings.use_question_marks,
-                                "Use Question Flags",
-                            )
-                            .changed();
-                        let auto_changed = ui
-                            .checkbox(
-                                &mut app.persistent.settings.auto_clear_on_flags,
-                                "Automatically clear on flags",
-                            )
-                            .changed();
-                        if question_changed || auto_changed {
-                            app.persistent.save();
-                        }
-                        ui.separator();
-                        if ui.button("Keyboard Shortcuts").clicked() {
-                            app.open_dialog(Dialog::Shortcuts);
-                            ui.close();
-                        }
-                        if ui.button("Help").clicked() {
-                            app.open_dialog(Dialog::Help);
-                            ui.close();
-                        }
-                        if ui.button("About Mines").clicked() {
-                            app.open_dialog(Dialog::About);
-                            ui.close();
-                        }
-                        ui.separator();
-                        if ui.button("Quit").clicked() {
-                            app.persistent.save();
-                            exit.write(AppExit::Success);
-                        }
-                    });
-
-                    if app.screen == Screen::Game && app.clock.has_started() {
-                        let symbol = if app.paused { "▶" } else { "⏸" };
-                        if ui
-                            .button(egui::RichText::new(symbol).size(18.0))
-                            .on_hover_text(if app.paused { "Resume" } else { "Pause" })
-                            .clicked()
-                        {
-                            app.toggle_pause();
-                        }
-                    }
-                });
-            });
-        });
+            }
+            ActionTarget { action: {action} }
+            Node {
+                width: px(250),
+                height: px(150),
+                margin: px(7),
+                border_radius: BorderRadius::all(px(10)),
+            }
+            on(handle_action)
+        }
+    }
 }
 
-fn render_new_game(ui: &mut egui::Ui, app: &mut MinesApp) {
-    ui.vertical_centered(|ui| {
-        ui.add_space((ui.available_height() * 0.08).max(8.0));
-        ui.heading("Choose Difficulty");
-        ui.add_space(18.0);
+#[derive(Clone)]
+struct UiSnapshot {
+    screen: Screen,
+    board: Option<Board>,
+    paused: bool,
+    keyboard_cursor: usize,
+    keyboard_active: bool,
+    dialog: Option<Dialog>,
+    help_page: usize,
+    elapsed: u64,
+    viewport_ratio: f32,
+    settings: Settings,
+    scores: Vec<crate::storage::Score>,
+}
 
-        egui::Grid::new("difficulty_grid")
-            .num_columns(2)
-            .spacing(egui::vec2(18.0, 18.0))
-            .show(ui, |ui| {
-                difficulty_card(ui, app, Difficulty::Small, "8 × 8", "10 mines");
-                difficulty_card(ui, app, Difficulty::Medium, "16 × 16", "40 mines");
-                ui.end_row();
-                difficulty_card(ui, app, Difficulty::Large, "30 × 16", "99 mines");
-                if large_card(ui, "?", "Custom").clicked() {
-                    app.screen = Screen::Custom;
-                }
-                ui.end_row();
-            });
+pub fn feathers_plugins() -> FeathersPlugins {
+    FeathersPlugins
+}
+
+pub fn native_ui_observers(app: &mut App) {
+    app.add_observer(cell_clicked)
+        .add_observer(cell_pressed)
+        .add_observer(cell_released);
+}
+
+pub fn mines_theme() -> UiTheme {
+    let mut theme = UiTheme(create_dark_theme());
+    let overrides = [
+        ("feathers.window.bg", Color::srgb(0.965, 0.961, 0.949)),
+        ("feathers.text.main", Color::srgb(0.12, 0.12, 0.13)),
+        ("feathers.text.dim", Color::srgb(0.36, 0.36, 0.38)),
+        ("feathers.button.bg", Color::srgb(0.88, 0.88, 0.88)),
+        ("feathers.button.bg.hover", Color::srgb(0.82, 0.82, 0.82)),
+        ("feathers.button.bg.pressed", Color::srgb(0.74, 0.74, 0.74)),
+        ("feathers.button.bg.disabled", Color::srgb(0.91, 0.91, 0.91)),
+        ("feathers.button.txt", Color::srgb(0.12, 0.12, 0.13)),
+        ("feathers.button.primary.bg", Color::srgb(0.21, 0.52, 0.89)),
+        (
+            "feathers.button.primary.bg.hover",
+            Color::srgb(0.16, 0.45, 0.82),
+        ),
+        (
+            "feathers.button.primary.bg.pressed",
+            Color::srgb(0.11, 0.37, 0.72),
+        ),
+        ("feathers.button.primary.txt", Color::WHITE),
+        ("feathers.button.plain.bg", Color::NONE),
+        (
+            "feathers.button.plain.bg.hover",
+            Color::srgb(0.88, 0.88, 0.88),
+        ),
+        (
+            "feathers.button.plain.bg.pressed",
+            Color::srgb(0.80, 0.80, 0.80),
+        ),
+        ("feathers.checkbox.text", Color::srgb(0.12, 0.12, 0.13)),
+        ("feathers.checkbox.bg", Color::WHITE),
+        ("feathers.checkbox.border", Color::srgb(0.55, 0.55, 0.57)),
+        (
+            "feathers.checkbox.bg.checked",
+            Color::srgb(0.21, 0.52, 0.89),
+        ),
+        (
+            "feathers.checkbox.border.checked",
+            Color::srgb(0.21, 0.52, 0.89),
+        ),
+        ("feathers.textinput.bg", Color::WHITE),
+        ("feathers.textinput.text", Color::srgb(0.12, 0.12, 0.13)),
+        ("feathers.textinput.cursor", Color::srgb(0.12, 0.12, 0.13)),
+    ];
+    for (token, color) in overrides {
+        theme.set_color(token, color);
+    }
+    theme
+}
+
+pub fn startup_scene() -> impl SceneList {
+    bsn_list![Camera2d]
+}
+
+pub fn setup_assets(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
+    let themes = TILE_SVGS
+        .iter()
+        .map(|theme| {
+            theme
+                .iter()
+                .map(|bytes| images.add(svg_image(bytes, 128)))
+                .collect()
+        })
+        .collect();
+    let flag = images.add(svg_image(
+        include_bytes!("../assets/icons/flag-symbolic.svg"),
+        64,
+    ));
+    let stopwatch = images.add(svg_image(
+        include_bytes!("../assets/icons/stopwatch-symbolic.svg"),
+        64,
+    ));
+    commands.insert_resource(ThemeAssets {
+        themes,
+        flag,
+        stopwatch,
     });
 }
 
-fn difficulty_card(
-    ui: &mut egui::Ui,
-    app: &mut MinesApp,
-    difficulty: Difficulty,
-    size: &str,
-    mines: &str,
-) {
-    if large_card(ui, size, mines).clicked() {
-        app.request(PendingAction::Start(difficulty));
-    }
-}
-
-fn large_card(ui: &mut egui::Ui, title: &str, subtitle: &str) -> egui::Response {
-    ui.add_sized(
-        egui::vec2(190.0, 116.0),
-        egui::Button::new(
-            egui::RichText::new(format!("{title}\n{subtitle}"))
-                .size(22.0)
-                .strong()
-                .line_height(Some(32.0)),
-        ),
+fn svg_image(bytes: &[u8], size: u32) -> Image {
+    let options = resvg::usvg::Options::default();
+    let tree = resvg::usvg::Tree::from_data(bytes, &options)
+        .expect("GNOME Mines SVG assets must be valid");
+    let mut pixmap =
+        resvg::tiny_skia::Pixmap::new(size, size).expect("theme texture allocation failed");
+    let tree_size = tree.size();
+    let transform = resvg::tiny_skia::Transform::from_scale(
+        size as f32 / tree_size.width(),
+        size as f32 / tree_size.height(),
+    );
+    resvg::render(&tree, transform, &mut pixmap.as_mut());
+    Image::new(
+        Extent3d {
+            width: size,
+            height: size,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        pixmap.take(),
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
     )
 }
 
-fn render_custom_game(ui: &mut egui::Ui, app: &mut MinesApp) {
-    let mut width = app.persistent.settings.custom_width;
-    let mut height = app.persistent.settings.custom_height;
-    let old_size = (width, height);
-    let old_mines = app.persistent.settings.custom_mines;
-    let mut percentage = 100.0 * old_mines as f64 / (width * height) as f64;
-    let mut percentage_changed = false;
-    let mut start = false;
-    let mut cancel = false;
-    ui.vertical_centered(|ui| {
-        ui.add_space((ui.available_height() * 0.12).max(12.0));
-        ui.heading("Custom Game");
-        ui.add_space(18.0);
+pub fn rebuild_ui(world: &mut World) {
+    if !world.resource::<MinesApp>().layout_dirty || world.get_resource::<ThemeAssets>().is_none() {
+        return;
+    }
 
-        egui::Grid::new("custom_grid")
-            .num_columns(2)
-            .spacing(egui::vec2(16.0, 10.0))
-            .show(ui, |ui| {
-                ui.label("Width");
-                ui.add(egui::DragValue::new(&mut width).range(4..=100));
-                ui.end_row();
-                ui.label("Height");
-                ui.add(egui::DragValue::new(&mut height).range(4..=100));
-                ui.end_row();
-                ui.label("Percent mines");
-                percentage_changed = ui
-                    .add(
-                        egui::DragValue::new(&mut percentage)
-                            .range(0.01..=99.0)
-                            .suffix("%")
-                            .speed(1.0),
-                    )
-                    .changed();
-                ui.end_row();
-            });
-
-        ui.add_space(18.0);
-        if ui
-            .add_sized(
-                egui::vec2(220.0, 40.0),
-                egui::Button::new(egui::RichText::new("Play Game").strong()),
-            )
-            .clicked()
-        {
-            start = true;
-        }
-        if ui
-            .add_sized(egui::vec2(220.0, 36.0), egui::Button::new("Cancel"))
-            .clicked()
-        {
-            cancel = true;
-        }
-    });
-
-    let size = width * height;
-    let mines = if old_size != (width, height) && !percentage_changed {
-        old_mines.clamp(1, size - 10)
-    } else {
-        ((percentage * size as f64 / 100.0).round() as usize).clamp(1, size - 10)
-    };
-    let settings = &mut app.persistent.settings;
-    if (
-        settings.custom_width,
-        settings.custom_height,
-        settings.custom_mines,
-    ) != (width, height, mines)
+    if let Some(root) = world.resource_mut::<UiRuntime>().root.take()
+        && world.get_entity(root).is_ok()
     {
-        settings.custom_width = width;
-        settings.custom_height = height;
-        settings.custom_mines = mines;
-        app.persistent.save();
+        world.despawn(root);
     }
-    if start {
-        app.request(PendingAction::Start(Difficulty::Custom));
-    } else if cancel {
-        app.screen = Screen::NewGame;
-    }
+
+    let viewport_ratio = {
+        let mut windows = world.query_filtered::<&Window, With<PrimaryWindow>>();
+        windows
+            .iter(world)
+            .next()
+            .map(|window| {
+                (window.resolution.width() - 40.0).max(1.0)
+                    / (window.resolution.height() - 150.0).max(1.0)
+            })
+            .unwrap_or(1.0)
+    };
+    let snapshot = {
+        let app = world.resource::<MinesApp>();
+        UiSnapshot {
+            screen: app.screen,
+            board: app.board.clone(),
+            paused: app.paused,
+            keyboard_cursor: app.keyboard_cursor,
+            keyboard_active: app.keyboard_active,
+            dialog: app.dialog,
+            help_page: app.help_page,
+            elapsed: app.clock.elapsed().as_secs(),
+            viewport_ratio,
+            settings: world.resource::<Settings>().clone(),
+            scores: app.persistent.scores.clone(),
+        }
+    };
+    let assets = world.resource::<ThemeAssets>().clone();
+    let root = world
+        .spawn_scene(app_scene(snapshot, assets))
+        .expect("native Mines UI scene should resolve")
+        .id();
+    world.resource_mut::<UiRuntime>().root = Some(root);
+    world.resource_mut::<MinesApp>().layout_dirty = false;
 }
 
-fn render_game(ui: &mut egui::Ui, app: &mut MinesApp) {
-    let landscape = ui.available_width() > ui.available_height() * 1.15;
-    if landscape {
-        ui.horizontal(|ui| {
-            let status_width = 118.0;
-            ui.allocate_ui_with_layout(
-                egui::vec2(
-                    (ui.available_width() - status_width).max(120.0),
-                    ui.available_height(),
-                ),
-                egui::Layout::top_down(egui::Align::Center),
-                |ui| render_board(ui, app),
-            );
-            ui.separator();
-            ui.allocate_ui_with_layout(
-                egui::vec2(status_width, ui.available_height()),
-                egui::Layout::top_down(egui::Align::Center).with_main_align(egui::Align::Center),
-                |ui| render_status(ui, app),
-            );
-        });
-    } else {
-        let status_height = 74.0;
-        ui.allocate_ui_with_layout(
-            egui::vec2(
-                ui.available_width(),
-                (ui.available_height() - status_height).max(120.0),
+fn app_scene(snapshot: UiSnapshot, assets: ThemeAssets) -> impl Scene {
+    let header = header_scene(&snapshot);
+    let content = screen_scene(&snapshot, &assets);
+    let dialog = dialog_scene(&snapshot, &assets);
+    bsn! {
+        UiRoot
+        Node {
+            width: percent(100),
+            height: percent(100),
+            flex_direction: FlexDirection::Column,
+            overflow: Overflow::clip(),
+        }
+        ThemeBackgroundColor(tokens::WINDOW_BG)
+        Children [
+            {header},
+            (
+                Node {
+                    width: percent(100),
+                    flex_grow: 1.0,
+                    min_height: px(0),
+                    padding: UiRect::all(px(20)),
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
+                }
+                Children [{content}]
             ),
-            egui::Layout::top_down(egui::Align::Center),
-            |ui| render_board(ui, app),
-        );
-        ui.separator();
-        ui.allocate_ui_with_layout(
-            egui::vec2(ui.available_width(), status_height),
-            egui::Layout::left_to_right(egui::Align::Center).with_main_align(egui::Align::Center),
-            |ui| render_status(ui, app),
-        );
+            {dialog}
+        ]
     }
 }
 
-fn render_status(ui: &mut egui::Ui, app: &MinesApp) {
-    let Some(board) = app.board.as_ref() else {
-        return;
-    };
-    let seconds = app.clock.elapsed().as_secs_f64().round() as u64;
-    let time_text = if seconds >= 3600 {
-        format!(
-            "{:02}∶{:02}∶{:02}",
-            seconds / 3600,
-            (seconds % 3600) / 60,
-            seconds % 60
+fn header_scene(snapshot: &UiSnapshot) -> Box<dyn SceneList> {
+    let right = boxed_button(
+        "Menu",
+        UiAction::Open(DialogKind::Menu),
+        ButtonVariant::Normal,
+    );
+    if snapshot.screen == Screen::NewGame {
+        return Box::new(bsn_list![
+            (
+                Node {
+                    width: percent(100),
+                    height: px(66),
+                    flex_shrink: 0.0,
+                    padding: UiRect::axes(px(18), px(10)),
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::SpaceBetween,
+                    border: UiRect::bottom(px(1)),
+                }
+                BackgroundColor(Color::srgb(0.99, 0.99, 0.99))
+                BorderColor::all(Color::srgb(0.74, 0.74, 0.74))
+                Children [
+                    (
+                        Node {
+                            min_width: px(190),
+                        }
+                        Pickable::IGNORE
+                    ),
+                    (
+                        Text("Mines")
+                        TextFont { font_size: FontSize::Px(26.0) }
+                        TextColor(Color::srgb(0.12, 0.12, 0.13))
+                    ),
+                    (
+                        Node {
+                            min_width: px(190),
+                            justify_content: JustifyContent::End,
+                        }
+                        Children [{right}]
+                    )
+                ]
+            )
+        ]);
+    }
+
+    let mut left: Vec<Box<dyn SceneList>> = Vec::new();
+    left.push(boxed_button(
+        "<",
+        UiAction::Request(PendingAction::ShowNewGame),
+        ButtonVariant::Plain,
+    ));
+    if snapshot.screen == Screen::Game {
+        left.push(boxed_button(
+            "Restart",
+            UiAction::Request(PendingAction::Restart),
+            ButtonVariant::Plain,
+        ));
+        if snapshot
+            .board
+            .as_ref()
+            .is_some_and(|board| board.outcome == Outcome::InProgress)
+        {
+            left.push(boxed_button(
+                if snapshot.paused { "Resume" } else { "Pause" },
+                UiAction::TogglePause,
+                ButtonVariant::Plain,
+            ));
+        }
+    }
+    Box::new(bsn_list![
+        (
+        Node {
+            width: percent(100),
+            height: px(66),
+            flex_shrink: 0.0,
+            padding: UiRect::axes(px(18), px(10)),
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::SpaceBetween,
+            border: UiRect::bottom(px(1)),
+        }
+        BackgroundColor(Color::srgb(0.99, 0.99, 0.99))
+        BorderColor::all(Color::srgb(0.74, 0.74, 0.74))
+        Children [
+            (
+                Node {
+                    min_width: px(190),
+                    column_gap: px(6),
+                    align_items: AlignItems::Center,
+                }
+                Children [{left}]
+            ),
+            (
+                Text("Mines")
+                TextFont { font_size: FontSize::Px(26.0) }
+                TextColor(Color::srgb(0.12, 0.12, 0.13))
+            ),
+            (
+                Node {
+                    min_width: px(190),
+                    justify_content: JustifyContent::End,
+                }
+                Children [{right}]
+            )
+        ]
         )
-    } else {
-        format!("{:02}∶{:02}", seconds / 60, seconds % 60)
-    };
-    let draw = |ui: &mut egui::Ui, icon: egui::ImageSource<'static>, value: String| {
-        ui.allocate_ui_with_layout(
-            egui::vec2(104.0, 68.0),
-            egui::Layout::top_down(egui::Align::Center),
-            |ui| {
-                ui.add(egui::Image::new(icon).fit_to_exact_size(egui::vec2(32.0, 32.0)));
-                ui.label(egui::RichText::new(value).size(17.0).monospace());
-            },
-        );
-    };
-    draw(
-        ui,
-        egui::include_image!("../assets/icons/flag-symbolic.svg"),
-        format!("{}/{}", board.flag_count, board.mine_count),
+    ])
+}
+
+fn screen_scene(snapshot: &UiSnapshot, assets: &ThemeAssets) -> Box<dyn SceneList> {
+    match snapshot.screen {
+        Screen::NewGame => Box::new(bsn_list![new_game_scene()]),
+        Screen::Custom => Box::new(bsn_list![custom_scene(snapshot)]),
+        Screen::Game => Box::new(bsn_list![game_scene(snapshot, assets)]),
+    }
+}
+
+fn new_game_scene() -> impl Scene {
+    let cards = vec![
+        difficulty_card(
+            "8 x 8",
+            "10 mines",
+            UiAction::Request(PendingAction::Start(Difficulty::Small)),
+        ),
+        difficulty_card(
+            "16 x 16",
+            "40 mines",
+            UiAction::Request(PendingAction::Start(Difficulty::Medium)),
+        ),
+        difficulty_card(
+            "30 x 16",
+            "99 mines",
+            UiAction::Request(PendingAction::Start(Difficulty::Large)),
+        ),
+        difficulty_card("?", "Custom", UiAction::ShowCustom),
+    ];
+    bsn! {
+        Node {
+            width: percent(100),
+            max_width: px(620),
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Center,
+            row_gap: px(26),
+        }
+        Children [
+            (
+                Text("Choose Difficulty")
+                TextFont { font_size: FontSize::Px(36.0) }
+                TextColor(Color::srgb(0.32, 0.32, 0.34))
+            ),
+            (
+                Node {
+                    width: percent(100),
+                    flex_wrap: FlexWrap::Wrap,
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
+                }
+                Children [{cards}]
+            )
+        ]
+    }
+}
+
+fn difficulty_card(title: &str, subtitle: &str, action: UiAction) -> impl Scene {
+    let title = title.to_owned();
+    let subtitle = subtitle.to_owned();
+    bsn! {
+        @DifficultyCard {
+            @title: {title},
+            @subtitle: {subtitle},
+            @action: {action},
+        }
+    }
+}
+
+fn custom_scene(snapshot: &UiSnapshot) -> impl Scene {
+    let settings = &snapshot.settings;
+    let percentage = (100.0 * settings.custom_mines as f64
+        / (settings.custom_width * settings.custom_height) as f64)
+        .round() as i32;
+    let inputs = vec![
+        number_input("Width", CustomField::Width),
+        number_input("Height", CustomField::Height),
+        number_input("Mines (%)", CustomField::Percentage),
+    ];
+    let summary = format!(
+        "{} x {} - {} mines ({}%)",
+        settings.custom_width, settings.custom_height, settings.custom_mines, percentage
     );
-    ui.add_space(if ui.layout().main_dir().is_vertical() {
-        18.0
-    } else {
-        30.0
-    });
-    draw(
-        ui,
-        egui::include_image!("../assets/icons/stopwatch-symbolic.svg"),
-        time_text,
-    );
+    let start = bsn_list![action_button(
+        "Play",
+        UiAction::Request(PendingAction::Start(Difficulty::Custom)),
+        ButtonVariant::Primary,
+    )];
+    bsn! {
+        Node {
+            width: percent(100),
+            max_width: px(520),
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Stretch,
+            row_gap: px(18),
+            padding: px(24),
+        }
+        Children [
+            (
+                Text("Custom Game")
+                TextFont { font_size: FontSize::Px(34.0) }
+                TextColor(Color::srgb(0.22, 0.22, 0.24))
+            ),
+            {inputs},
+            (
+                Text({summary})
+                TextFont { font_size: FontSize::Px(17.0) }
+                TextColor(Color::srgb(0.36, 0.36, 0.38))
+            ),
+            {start}
+        ]
+    }
 }
 
-fn render_board(ui: &mut egui::Ui, app: &mut MinesApp) {
-    let Some(board) = app.board.as_ref() else {
-        return;
+fn number_input(label: &str, field: CustomField) -> impl Scene {
+    let label = label.to_owned();
+    bsn! {
+        Node {
+            width: percent(100),
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::SpaceBetween,
+            column_gap: px(16),
+        }
+        Children [
+            (
+                Text({label})
+                TextFont { font_size: FontSize::Px(19.0) }
+                TextColor(Color::srgb(0.18, 0.18, 0.20))
+            ),
+            (
+                @FeathersNumberInput {
+                    @number_format: NumberFormat::I32,
+                }
+                CustomInput { field: {field} }
+                Node {
+                    width: px(170),
+                }
+                on(custom_value_changed)
+            )
+        ]
+    }
+}
+
+fn game_scene(snapshot: &UiSnapshot, assets: &ThemeAssets) -> impl Scene {
+    let board = snapshot
+        .board
+        .as_ref()
+        .expect("game screen always owns a board");
+    let theme_index = theme_index(&snapshot.settings.theme);
+    let textures = &assets.themes[theme_index];
+    let cells: Vec<_> = (0..board.cells.len())
+        .map(|index| cell_scene(snapshot, index, textures))
+        .collect();
+    let gap = if board.width.max(board.height) <= 16 {
+        2.0
+    } else if board.width.max(board.height) <= 30 {
+        1.0
+    } else {
+        0.0
     };
-    let width = board.width;
-    let height = board.height;
-    let available = ui.available_rect_before_wrap();
-    let tile_size = (available.width() / width as f32)
-        .min(available.height() / height as f32)
-        .clamp(3.0, 64.0);
-    let board_size = egui::vec2(tile_size * width as f32, tile_size * height as f32);
-    let origin = available.center() - board_size * 0.5;
-    let board_rect = egui::Rect::from_min_size(origin, board_size);
-    ui.allocate_rect(available, egui::Sense::hover());
-    let painter = ui.painter_at(board_rect);
-    let mut action = None;
-
-    for y in 0..height {
-        for x in 0..width {
-            let index = board.index(x, y);
-            let cell = board.cells[index];
-            let min = origin + egui::vec2(x as f32 * tile_size, y as f32 * tile_size);
-            let rect = egui::Rect::from_min_size(min, egui::vec2(tile_size, tile_size));
-            let response = ui.interact(
-                rect,
-                ui.id().with(("mine", index)),
-                if app.paused {
-                    egui::Sense::hover()
-                } else {
-                    egui::Sense::click()
-                },
-            );
-
-            let keyboard_cursor =
-                app.keyboard_active && app.keyboard_cursor == index && !app.paused;
-            let fill = tile_fill(
-                &app.persistent.settings.theme,
-                cell,
-                board.outcome,
-                keyboard_cursor,
-                response.hovered(),
-                response.is_pointer_button_down_on(),
-            );
-            painter.rect_filled(rect.shrink(0.5), egui::CornerRadius::same(3), fill);
-            painter.rect_stroke(
-                rect.shrink(0.5),
-                egui::CornerRadius::same(3),
-                egui::Stroke::new(1.0, egui::Color32::from_rgb(246, 245, 244)),
-                egui::StrokeKind::Inside,
-            );
-
-            if let Some(icon) = cell_icon(cell, board.outcome) {
-                let icon_rect = rect.shrink((tile_size * 0.13).clamp(0.5, 6.0));
-                ui.put(
-                    icon_rect,
-                    egui::Image::new(theme_image_source(&app.persistent.settings.theme, icon))
-                        .fit_to_exact_size(icon_rect.size()),
-                );
-            }
-
-            let ctrl = ui.ctx().input(|input| input.modifiers.ctrl);
-            if response.secondary_clicked()
-                || (ctrl && response.clicked_by(egui::PointerButton::Primary))
-            {
-                action = Some(CellAction::Mark(x, y));
-            } else if response.clicked_by(egui::PointerButton::Primary) {
-                action = Some(if cell.revealed {
-                    CellAction::Chord(x, y)
-                } else {
-                    CellAction::Reveal(x, y)
-                });
-            }
-        }
-    }
-
-    if app.paused {
-        painter.rect_filled(
-            board_rect,
-            egui::CornerRadius::same(4),
-            egui::Color32::from_rgba_unmultiplied(186, 189, 182, 242),
-        );
-        painter.text(
-            board_rect.center(),
-            egui::Align2::CENTER_CENTER,
-            "Paused",
-            egui::FontId::proportional(32.0),
-            egui::Color32::WHITE,
-        );
-        let response = ui.interact(board_rect, ui.id().with("paused"), egui::Sense::click());
-        if response.clicked() {
-            app.set_paused(false, true);
-        }
-    }
-
-    if let Some(action) = action {
-        app.keyboard_active = false;
-        app.apply_cell_action(action);
-    }
-}
-
-fn tile_fill(
-    theme: &str,
-    cell: crate::game::Cell,
-    outcome: Outcome,
-    cursor: bool,
-    hovered: bool,
-    pressed: bool,
-) -> egui::Color32 {
-    if cursor {
-        return egui::Color32::from_rgb(233, 185, 110);
-    }
-    if pressed {
-        return egui::Color32::from_rgb(136, 138, 133);
-    }
-    if cell.revealed {
-        if outcome == Outcome::Lost && cell.mine {
-            return if theme == "modern" {
-                egui::Color32::from_rgb(245, 194, 17)
-            } else {
-                egui::Color32::from_rgb(211, 215, 207)
-            };
-        }
-        if theme == "bgcolors" && cell.adjacent > 0 {
-            const COLORS: [(u8, u8, u8); 8] = [
-                (221, 250, 195),
-                (236, 237, 191),
-                (237, 218, 180),
-                (237, 195, 138),
-                (247, 161, 162),
-                (254, 167, 133),
-                (255, 125, 96),
-                (255, 50, 60),
-            ];
-            let (r, g, b) = COLORS[cell.adjacent as usize - 1];
-            return egui::Color32::from_rgb(r, g, b);
-        }
-        if outcome == Outcome::Lost && theme == "modern" {
-            egui::Color32::from_rgb(192, 191, 188)
-        } else {
-            egui::Color32::from_rgb(222, 222, 220)
-        }
-    } else if outcome == Outcome::Lost {
-        if theme == "modern" {
-            egui::Color32::from_rgb(154, 153, 150)
-        } else {
-            egui::Color32::from_rgb(136, 138, 133)
-        }
-    } else if hovered {
-        egui::Color32::from_rgb(211, 215, 207)
+    let border = if board.width.max(board.height) <= 30 {
+        1.0
     } else {
-        egui::Color32::from_rgb(186, 189, 182)
+        0.25
+    };
+    let board_ratio = board.width as f32 / board.height as f32;
+    let (board_width, board_height) = if board_ratio > snapshot.viewport_ratio {
+        (percent(100), Val::Auto)
+    } else {
+        (Val::Auto, percent(100))
+    };
+    let status = bsn_list![status_scene(snapshot, assets)];
+    let pause_overlay: Box<dyn SceneList> = if snapshot.paused {
+        Box::new(bsn_list![
+            (
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: percent(0),
+                    top: percent(0),
+                    width: percent(100),
+                    height: percent(100),
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
+                }
+                ZIndex(20)
+                BackgroundColor(Color::srgba(0.96, 0.96, 0.96, 0.86))
+                Children [(
+                    Text("Paused")
+                    TextFont { font_size: FontSize::Px(44.0) }
+                    TextColor(Color::srgb(0.18, 0.18, 0.20))
+                )]
+            )
+        ])
+    } else {
+        Box::new(bsn_list![])
+    };
+
+    bsn! {
+        Node {
+            width: percent(100),
+            height: percent(100),
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::Center,
+            row_gap: px(12),
+            min_height: px(0),
+        }
+        Children [
+            (
+                Node {
+                    position_type: PositionType::Relative,
+                    width: percent(100),
+                    flex_grow: 1.0,
+                    min_height: px(0),
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
+                }
+                Children [
+                    (
+                        Node {
+                            display: Display::Grid,
+                            width: {board_width},
+                            height: {board_height},
+                            max_width: px(1100),
+                            max_height: px(820),
+                            aspect_ratio:
+                                {Some(board_ratio)},
+                            grid_template_columns:
+                                {RepeatedGridTrack::flex::<Vec<RepeatedGridTrack>>(
+                                    board.width as u16,
+                                    1.0,
+                                )},
+                            grid_template_rows:
+                                {RepeatedGridTrack::flex::<Vec<RepeatedGridTrack>>(
+                                    board.height as u16,
+                                    1.0,
+                                )},
+                            column_gap: {px(gap)},
+                            row_gap: {px(gap)},
+                            border: {px(border)},
+                        }
+                        BackgroundColor(Color::srgb(0.72, 0.72, 0.72))
+                        BorderColor::all(Color::srgb(0.62, 0.62, 0.62))
+                        Children [{cells}]
+                    ),
+                    {pause_overlay}
+                ]
+            ),
+            {status}
+        ]
     }
 }
 
-fn cell_icon(cell: crate::game::Cell, outcome: Outcome) -> Option<&'static str> {
+fn cell_scene(snapshot: &UiSnapshot, index: usize, textures: &[Handle<Image>]) -> impl Scene {
+    let board = snapshot.board.as_ref().unwrap();
+    let cell = board.cells[index];
+    let selected = snapshot.keyboard_active && snapshot.keyboard_cursor == index;
+    let background = if cell.revealed {
+        Color::srgb(0.96, 0.96, 0.95)
+    } else {
+        Color::srgb(0.82, 0.82, 0.82)
+    };
+    let border_color = if selected {
+        Color::srgb(0.13, 0.45, 0.86)
+    } else if cell.revealed {
+        Color::srgb(0.78, 0.78, 0.78)
+    } else {
+        Color::srgb(0.66, 0.66, 0.66)
+    };
+    let image: Box<dyn SceneList> = tile_graphic(board, index)
+        .map(|graphic| {
+            let handle = textures[graphic].clone();
+            Box::new(bsn_list![
+                (
+                    ImageNode { image: {handle} }
+                    Node {
+                        width: percent(100),
+                        height: percent(100),
+                    }
+                    Pickable::IGNORE
+                )
+            ]) as Box<dyn SceneList>
+        })
+        .unwrap_or_else(|| Box::new(bsn_list![]));
+
+    bsn! {
+        CellTarget { index }
+        Node {
+            width: percent(100),
+            height: percent(100),
+            min_width: px(0),
+            min_height: px(0),
+            border: {px(if selected { 2.5 } else { 0.75 })},
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::Center,
+            overflow: Overflow::clip(),
+        }
+        BackgroundColor({background})
+        BorderColor::all(border_color)
+        Children [{image}]
+    }
+}
+
+fn tile_graphic(board: &Board, index: usize) -> Option<usize> {
+    let cell = board.cells[index];
+    if board.outcome == Outcome::Lost {
+        if board.exploded_cell == Some(index) {
+            return Some(9);
+        }
+        if cell.mark == Mark::Flag && !cell.mine {
+            return Some(11);
+        }
+        if cell.mine && cell.mark != Mark::Flag {
+            return Some(8);
+        }
+    }
     if cell.revealed {
         if cell.mine {
-            Some("exploded")
+            Some(8)
         } else if cell.adjacent > 0 {
-            Some(match cell.adjacent {
-                1 => "1mines",
-                2 => "2mines",
-                3 => "3mines",
-                4 => "4mines",
-                5 => "5mines",
-                6 => "6mines",
-                7 => "7mines",
-                _ => "8mines",
-            })
+            Some(cell.adjacent as usize - 1)
         } else {
             None
         }
-    } else if outcome == Outcome::Lost && cell.mark == Mark::Flag && !cell.mine {
-        Some("incorrect")
-    } else if outcome == Outcome::Lost && cell.mine && cell.mark != Mark::Flag {
-        Some("mine")
     } else {
         match cell.mark {
             Mark::None => None,
-            Mark::Flag => Some("flag"),
-            Mark::Maybe => Some("maybe"),
+            Mark::Flag => Some(10),
+            Mark::Maybe => Some(12),
         }
     }
 }
 
-macro_rules! included_svg {
-    ($theme:literal, $icon:literal) => {
-        egui::ImageSource::Bytes {
-            uri: Cow::Borrowed(concat!("bytes://themes/", $theme, "/", $icon, ".svg")),
-            bytes: egui::load::Bytes::Static(include_bytes!(concat!(
-                "../assets/themes/",
-                $theme,
-                "/",
-                $icon,
-                ".svg"
-            ))),
+fn status_scene(snapshot: &UiSnapshot, assets: &ThemeAssets) -> impl Scene {
+    let board = snapshot.board.as_ref().unwrap();
+    let flags = format!("{}/{}", board.flag_count, board.mine_count);
+    let elapsed = format_time(snapshot.elapsed);
+    let flag = assets.flag.clone();
+    let stopwatch = assets.stopwatch.clone();
+    bsn! {
+        Node {
+            height: px(52),
+            padding: UiRect::axes(px(18), px(8)),
+            column_gap: px(34),
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::Center,
+            border_radius: BorderRadius::all(px(10)),
         }
-    };
-}
-
-fn theme_image_source(theme: &str, icon: &str) -> egui::ImageSource<'static> {
-    match (theme, icon) {
-        ("bgcolors", "1mines") => included_svg!("bgcolors", "1mines"),
-        ("bgcolors", "2mines") => included_svg!("bgcolors", "2mines"),
-        ("bgcolors", "3mines") => included_svg!("bgcolors", "3mines"),
-        ("bgcolors", "4mines") => included_svg!("bgcolors", "4mines"),
-        ("bgcolors", "5mines") => included_svg!("bgcolors", "5mines"),
-        ("bgcolors", "6mines") => included_svg!("bgcolors", "6mines"),
-        ("bgcolors", "7mines") => included_svg!("bgcolors", "7mines"),
-        ("bgcolors", "8mines") => included_svg!("bgcolors", "8mines"),
-        ("bgcolors", "flag") => included_svg!("bgcolors", "flag"),
-        ("bgcolors", "maybe") => included_svg!("bgcolors", "maybe"),
-        ("bgcolors", "mine") => included_svg!("bgcolors", "mine"),
-        ("bgcolors", "incorrect") => included_svg!("bgcolors", "incorrect"),
-        ("bgcolors", "exploded") => included_svg!("bgcolors", "exploded"),
-        ("classic", "1mines") => included_svg!("classic", "1mines"),
-        ("classic", "2mines") => included_svg!("classic", "2mines"),
-        ("classic", "3mines") => included_svg!("classic", "3mines"),
-        ("classic", "4mines") => included_svg!("classic", "4mines"),
-        ("classic", "5mines") => included_svg!("classic", "5mines"),
-        ("classic", "6mines") => included_svg!("classic", "6mines"),
-        ("classic", "7mines") => included_svg!("classic", "7mines"),
-        ("classic", "8mines") => included_svg!("classic", "8mines"),
-        ("classic", "flag") => included_svg!("classic", "flag"),
-        ("classic", "maybe") => included_svg!("classic", "maybe"),
-        ("classic", "mine") => included_svg!("classic", "mine"),
-        ("classic", "incorrect") => included_svg!("classic", "incorrect"),
-        ("classic", "exploded") => included_svg!("classic", "exploded"),
-        ("default", "1mines") => included_svg!("default", "1mines"),
-        ("default", "2mines") => included_svg!("default", "2mines"),
-        ("default", "3mines") => included_svg!("default", "3mines"),
-        ("default", "4mines") => included_svg!("default", "4mines"),
-        ("default", "5mines") => included_svg!("default", "5mines"),
-        ("default", "6mines") => included_svg!("default", "6mines"),
-        ("default", "7mines") => included_svg!("default", "7mines"),
-        ("default", "8mines") => included_svg!("default", "8mines"),
-        ("default", "flag") => included_svg!("default", "flag"),
-        ("default", "maybe") => included_svg!("default", "maybe"),
-        ("default", "mine") => included_svg!("default", "mine"),
-        ("default", "incorrect") => included_svg!("default", "incorrect"),
-        ("default", "exploded") => included_svg!("default", "exploded"),
-        ("modern", "1mines") => included_svg!("modern", "1mines"),
-        ("modern", "2mines") => included_svg!("modern", "2mines"),
-        ("modern", "3mines") => included_svg!("modern", "3mines"),
-        ("modern", "4mines") => included_svg!("modern", "4mines"),
-        ("modern", "5mines") => included_svg!("modern", "5mines"),
-        ("modern", "6mines") => included_svg!("modern", "6mines"),
-        ("modern", "7mines") => included_svg!("modern", "7mines"),
-        ("modern", "8mines") => included_svg!("modern", "8mines"),
-        ("modern", "flag") => included_svg!("modern", "flag"),
-        ("modern", "maybe") => included_svg!("modern", "maybe"),
-        ("modern", "mine") => included_svg!("modern", "mine"),
-        ("modern", "incorrect") => included_svg!("modern", "incorrect"),
-        ("modern", "exploded") => included_svg!("modern", "exploded"),
-        (_, icon) => theme_image_source("bgcolors", icon),
+        BackgroundColor(Color::srgb(0.91, 0.91, 0.90))
+        Children [
+            (
+                Node {
+                    align_items: AlignItems::Center,
+                    column_gap: px(8),
+                }
+                Children [
+                    (
+                        ImageNode { image: {flag} }
+                        Node { width: px(25), height: px(25) }
+                    ),
+                    (
+                        Text({flags})
+                        TextFont { font_size: FontSize::Px(20.0) }
+                        TextColor(Color::srgb(0.12, 0.12, 0.13))
+                    )
+                ]
+            ),
+            (
+                Node {
+                    align_items: AlignItems::Center,
+                    column_gap: px(8),
+                }
+                Children [
+                    (
+                        ImageNode { image: {stopwatch} }
+                        Node { width: px(25), height: px(25) }
+                    ),
+                    (
+                        ClockText
+                        Text({elapsed})
+                        TextFont { font_size: FontSize::Px(20.0) }
+                        TextColor(Color::srgb(0.12, 0.12, 0.13))
+                    )
+                ]
+            )
+        ]
     }
 }
 
-fn render_dialog(ctx: &egui::Context, app: &mut MinesApp) {
-    let Some(dialog) = app.dialog else {
-        return;
+fn dialog_scene(snapshot: &UiSnapshot, assets: &ThemeAssets) -> Box<dyn SceneList> {
+    let Some(dialog) = snapshot.dialog else {
+        return Box::new(bsn_list![]);
     };
     match dialog {
-        Dialog::Menu => render_menu(ctx, app),
-        Dialog::Confirm(state) => render_confirm(ctx, app, state),
-        Dialog::Scores => render_scores(ctx, app),
-        Dialog::Appearance => render_appearance(ctx, app),
-        Dialog::Shortcuts => render_shortcuts(ctx, app),
-        Dialog::Help => render_help(ctx, app),
-        Dialog::About => render_about(ctx, app),
-        Dialog::Victory => render_victory(ctx, app),
+        Dialog::Menu => menu_dialog(snapshot),
+        Dialog::Confirm(_) => confirm_dialog(),
+        Dialog::Scores => scores_dialog(snapshot),
+        Dialog::Appearance => appearance_dialog(snapshot, assets),
+        Dialog::Shortcuts => shortcuts_dialog(),
+        Dialog::Help => help_dialog(snapshot),
+        Dialog::About => about_dialog(),
+        Dialog::Victory => victory_dialog(snapshot),
     }
 }
 
-fn render_menu(ctx: &egui::Context, app: &mut MinesApp) {
-    let mut open = true;
-    egui::Window::new("Menu")
-        .open(&mut open)
-        .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-12.0, 62.0))
-        .collapsible(false)
-        .resizable(false)
-        .default_width(290.0)
-        .show(ctx, |ui| {
-            if ui.button("Scores").clicked() {
-                app.dialog = Some(Dialog::Scores);
-            }
-            if ui.button("Appearance").clicked() {
-                app.dialog = Some(Dialog::Appearance);
-            }
-            ui.separator();
-            let question_changed = ui
-                .checkbox(
-                    &mut app.persistent.settings.use_question_marks,
-                    "Use Question Flags",
-                )
-                .changed();
-            let auto_changed = ui
-                .checkbox(
-                    &mut app.persistent.settings.auto_clear_on_flags,
-                    "Automatically clear on flags",
-                )
-                .changed();
-            if question_changed || auto_changed {
-                app.persistent.save();
-            }
-            ui.separator();
-            if ui.button("Keyboard Shortcuts").clicked() {
-                app.dialog = Some(Dialog::Shortcuts);
-            }
-            if ui.button("Help").clicked() {
-                app.dialog = Some(Dialog::Help);
-            }
-            if ui.button("About Mines").clicked() {
-                app.dialog = Some(Dialog::About);
-            }
-        });
-    if !open {
-        app.dialog = None;
-    }
-}
-
-fn modal(title: &str) -> egui::Window<'_> {
-    egui::Window::new(title)
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .collapsible(false)
-        .resizable(false)
-}
-
-fn render_confirm(ctx: &egui::Context, app: &mut MinesApp, state: ConfirmState) {
-    modal("Do you want to start a new game?")
-        .default_width(390.0)
-        .min_width(390.0)
-        .max_width(390.0)
-        .show(ctx, |ui| {
-            ui.label("If you start a new game, your current progress will be lost.");
-            ui.add_space(12.0);
-            ui.horizontal(|ui| {
-                if ui.button("Keep Current Game").clicked() {
-                    app.dialog = None;
-                    app.paused = state.was_paused;
-                    app.pause_requested = state.was_pause_requested;
-                    if !app.paused {
-                        app.clock.resume();
-                    }
-                }
-                if ui
-                    .add(
-                        egui::Button::new("Start New Game")
-                            .fill(egui::Color32::from_rgb(192, 28, 40)),
-                    )
-                    .clicked()
-                {
-                    app.execute(state.action);
-                }
-            });
-        });
-}
-
-fn render_scores(ctx: &egui::Context, app: &mut MinesApp) {
-    let mut open = true;
-    egui::Window::new("Scores")
-        .open(&mut open)
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .collapsible(false)
-        .resizable(true)
-        .default_size(egui::vec2(430.0, 420.0))
-        .show(ctx, |ui| {
-            let mut groups: BTreeMap<(usize, usize, usize), Vec<_>> = BTreeMap::new();
-            for score in &app.persistent.scores {
-                groups
-                    .entry((score.width, score.height, score.mines))
-                    .or_default()
-                    .push(score);
-            }
-            if groups.is_empty() {
-                ui.vertical_centered(|ui| {
-                    ui.add_space(80.0);
-                    ui.label("No scores yet.");
-                    ui.label("Complete a minefield to record your time.");
-                });
-            } else {
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    for ((width, height, mines), scores) in groups {
-                        ui.collapsing(format!("{width} × {height}, {mines} mines"), |ui| {
-                            egui::Grid::new(("scores", width, height, mines))
-                                .striped(true)
-                                .show(ui, |ui| {
-                                    ui.strong("Rank");
-                                    ui.strong("Time");
-                                    ui.end_row();
-                                    for (rank, score) in scores.iter().enumerate() {
-                                        ui.label(format!("{}.", rank + 1));
-                                        ui.monospace(format_duration(score.seconds));
-                                        ui.end_row();
-                                    }
-                                });
-                        });
-                    }
-                });
-            }
-        });
-    if !open {
-        app.dialog = None;
-    }
-}
-
-fn render_appearance(ctx: &egui::Context, app: &mut MinesApp) {
-    let mut open = true;
-    egui::Window::new("Select Theme")
-        .open(&mut open)
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .collapsible(false)
-        .resizable(false)
-        .fixed_size(egui::vec2(430.0, 390.0))
-        .show(ctx, |ui| {
-            ui.label("Choose a tile appearance:");
-            ui.add_space(8.0);
-            for (theme, name) in THEMES {
-                let selected = app.persistent.settings.theme == theme;
-                let frame = egui::Frame::group(ui.style()).fill(if selected {
-                    egui::Color32::from_rgb(220, 234, 249)
-                } else {
-                    ui.visuals().faint_bg_color
-                });
-                let response = frame
-                    .show(ui, |ui| {
-                        ui.set_min_height(70.0);
-                        ui.horizontal(|ui| {
-                            for icon in ["1mines", "3mines", "flag", "mine"] {
-                                ui.add(
-                                    egui::Image::new(theme_image_source(theme, icon))
-                                        .fit_to_exact_size(egui::vec2(44.0, 44.0)),
-                                );
-                            }
-                            ui.add_space(12.0);
-                            ui.label(egui::RichText::new(name).strong());
-                        });
-                    })
-                    .response
-                    .interact(egui::Sense::click());
-                if response.clicked() {
-                    app.persistent.settings.theme = theme.to_owned();
-                    app.persistent.save();
-                }
-            }
-        });
-    if !open {
-        app.dialog = None;
-    }
-}
-
-fn render_shortcuts(ctx: &egui::Context, app: &mut MinesApp) {
-    let mut open = true;
-    egui::Window::new("Keyboard Shortcuts")
-        .open(&mut open)
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .collapsible(false)
-        .default_size(egui::vec2(480.0, 520.0))
-        .show(ctx, |ui| {
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                shortcut_section(
-                    ui,
-                    "Window and game",
-                    &[
-                        ("Ctrl+N", "Start a new game"),
-                        ("Ctrl+R", "Restart with current settings"),
-                        ("Pause", "Pause or resume the game"),
-                        ("F1", "Show Help"),
-                        ("F10", "Open Menu"),
-                        ("Ctrl+?", "Show Keyboard Shortcuts"),
-                        ("Ctrl+Q / Ctrl+W", "Quit"),
-                    ],
-                );
-                shortcut_section(
-                    ui,
-                    "Game size selection",
-                    &[
-                        ("1", "Game size: small"),
-                        ("2", "Game size: medium"),
-                        ("3", "Game size: large"),
-                        ("4", "Game size: custom"),
-                    ],
-                );
-                shortcut_section(
-                    ui,
-                    "In-game",
-                    &[
-                        ("Arrows / U J H K", "Move the keyboard cursor"),
-                        ("Space", "Reveal field"),
-                        ("Ctrl+Space", "Toggle field flag state"),
-                    ],
-                );
-            });
-        });
-    if !open {
-        app.dialog = None;
-    }
-}
-
-fn shortcut_section(ui: &mut egui::Ui, heading: &str, rows: &[(&str, &str)]) {
-    ui.heading(heading);
-    egui::Grid::new(heading).striped(true).show(ui, |ui| {
-        for (keys, action) in rows {
-            ui.monospace(*keys);
-            ui.label(*action);
-            ui.end_row();
+fn modal(title: &str, body: Box<dyn SceneList>, actions: Vec<Box<dyn SceneList>>) -> impl Scene {
+    let title = title.to_owned();
+    bsn! {
+        Node {
+            position_type: PositionType::Absolute,
+            left: percent(0),
+            top: percent(0),
+            width: percent(100),
+            height: percent(100),
+            padding: px(24),
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::Center,
         }
-    });
-    ui.add_space(14.0);
+        ZIndex(100)
+        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.45))
+        Children [(
+            Node {
+                width: percent(100),
+                max_width: px(620),
+                max_height: percent(92),
+                flex_direction: FlexDirection::Column,
+                row_gap: px(18),
+                padding: px(24),
+                border: px(1),
+                border_radius: BorderRadius::all(px(12)),
+                overflow: Overflow::clip(),
+            }
+            BackgroundColor(Color::srgb(0.98, 0.98, 0.98))
+            BorderColor::all(Color::srgb(0.67, 0.67, 0.67))
+            Children [
+                (
+                    Text({title})
+                    TextFont { font_size: FontSize::Px(30.0) }
+                    TextColor(Color::srgb(0.16, 0.16, 0.18))
+                ),
+                (
+                    Node {
+                        width: percent(100),
+                        flex_direction: FlexDirection::Column,
+                        row_gap: px(10),
+                        overflow: Overflow::clip_y(),
+                    }
+                    Children [{body}]
+                ),
+                (
+                    Node {
+                        width: percent(100),
+                        justify_content: JustifyContent::End,
+                        align_items: AlignItems::Center,
+                        column_gap: px(10),
+                        flex_wrap: FlexWrap::Wrap,
+                    }
+                    Children [{actions}]
+                )
+            ]
+        )]
+    }
 }
 
-fn render_help(ctx: &egui::Context, app: &mut MinesApp) {
-    const PAGES: [(&str, &str); 5] = [
-        (
-            "Game rules",
-            "Clear every tile that does not contain a mine. A revealed number tells you how many mines are in the eight surrounding tiles. Revealing a mine ends the game. Your first revealed tile and all of its neighbours are always safe.",
+fn menu_dialog(snapshot: &UiSnapshot) -> Box<dyn SceneList> {
+    let toggles = vec![
+        setting_checkbox("Question Marks", SettingKey::QuestionMarks),
+        setting_checkbox("Auto-clear on Flags", SettingKey::AutoClear),
+    ];
+    let items = vec![
+        boxed_button(
+            "Scores",
+            UiAction::Open(DialogKind::Scores),
+            ButtonVariant::Normal,
         ),
-        (
-            "Using flags",
-            "Right-click a hidden tile, Ctrl-click it, or press Ctrl+Space with the keyboard cursor to mark a suspected mine. With question flags enabled, the next mark is a question mark. Right-click again to clear it.",
+        boxed_button(
+            "Appearance",
+            UiAction::Open(DialogKind::Appearance),
+            ButtonVariant::Normal,
         ),
-        (
-            "Clearing around a number",
-            "Click a revealed number after placing the matching number of flags around it to reveal all other neighbouring tiles. Incorrect flags can make this action reveal a mine.",
+        boxed_button(
+            "Keyboard Shortcuts",
+            UiAction::Open(DialogKind::Shortcuts),
+            ButtonVariant::Normal,
         ),
-        (
-            "Board size",
-            "Choose Small (8×8, 10 mines), Medium (16×16, 40 mines), Large (30×16, 99 mines), or configure a custom board from 4×4 up to 100×100.",
+        boxed_button(
+            "Help",
+            UiAction::Open(DialogKind::Help),
+            ButtonVariant::Normal,
         ),
-        (
-            "High scores",
-            "A completed game records its rounded completion time. Scores are grouped by exact board dimensions and mine count, with lower times ranked first.",
+        boxed_button(
+            "About Mines",
+            UiAction::Open(DialogKind::About),
+            ButtonVariant::Normal,
         ),
     ];
-    let mut open = true;
-    egui::Window::new("Mines Help")
-        .open(&mut open)
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .collapsible(false)
-        .default_size(egui::vec2(520.0, 360.0))
-        .show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.vertical(|ui| {
-                    for (index, (title, _)) in PAGES.iter().enumerate() {
-                        if ui
-                            .selectable_label(app.help_page == index, *title)
-                            .clicked()
-                        {
-                            app.help_page = index;
-                        }
-                    }
-                });
-                ui.separator();
-                ui.vertical(|ui| {
-                    ui.heading(PAGES[app.help_page].0);
-                    ui.add_space(8.0);
-                    ui.label(PAGES[app.help_page].1);
-                    ui.add_space(18.0);
-                    ui.hyperlink_to(
-                        "Open the complete GNOME Mines manual",
-                        "https://help.gnome.org/users/gnome-mines/stable/",
-                    );
-                });
-            });
-        });
-    if !open {
-        app.dialog = None;
+    let version = format!("Bevy 0.19 native UI - {} theme", snapshot.settings.theme);
+    let body = Box::new(bsn_list![
+        (
+            Node {
+                width: percent(100),
+                flex_direction: FlexDirection::Column,
+                row_gap: px(10),
+            }
+            Children [{toggles}]
+        ),
+        (
+            Node {
+                width: percent(100),
+                flex_direction: FlexDirection::Column,
+                row_gap: px(8),
+            }
+            Children [{items}]
+        ),
+        (
+            Text({version})
+            TextFont { font_size: FontSize::Px(14.0) }
+            TextColor(Color::srgb(0.42, 0.42, 0.44))
+        )
+    ]);
+    let actions = vec![
+        boxed_button("Quit", UiAction::Quit, ButtonVariant::Plain),
+        boxed_button("Close", UiAction::CloseDialog, ButtonVariant::Primary),
+    ];
+    Box::new(bsn_list![modal("Menu", body, actions)])
+}
+
+fn setting_checkbox(label: &str, key: SettingKey) -> impl Scene {
+    let label = label.to_owned();
+    bsn! {
+        @FeathersCheckbox {
+            @caption: bsn! { Text({label}) ThemedText }
+        }
+        SettingTarget { key: {key} }
+        on(checkbox_self_update)
+        on(setting_changed)
     }
 }
 
-fn render_about(ctx: &egui::Context, app: &mut MinesApp) {
-    let mut open = true;
-    egui::Window::new("About Mines")
-        .open(&mut open)
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .collapsible(false)
-        .resizable(false)
-        .default_width(430.0)
-        .min_width(430.0)
-        .max_width(430.0)
-        .show(ctx, |ui| {
-            ui.vertical_centered(|ui| {
-                ui.add(
-                    egui::Image::new(egui::include_image!("../assets/icons/org.gnome.Mines.svg"))
-                        .fit_to_exact_size(egui::vec2(96.0, 96.0)),
-                );
-                ui.heading("Mines");
-                ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
-                ui.label("Clear explosive mines off the board");
-                ui.add_space(10.0);
-                ui.label("The GNOME Project");
-                ui.label("Bevy recreation");
-                ui.add_space(10.0);
-                ui.hyperlink_to("GNOME Mines source", "https://github.com/GNOME/gnome-mines");
-                ui.label("GNU General Public License v3.0 or later");
-                ui.small("Artwork by Richard Hoelscher and GNOME Mines contributors.");
-            });
-        });
-    if !open {
-        app.dialog = None;
+fn confirm_dialog() -> Box<dyn SceneList> {
+    let body = Box::new(bsn_list![
+        (
+            Text("The current game will be lost.")
+            TextFont { font_size: FontSize::Px(19.0) }
+            TextColor(Color::srgb(0.22, 0.22, 0.24))
+        )
+    ]);
+    let actions = vec![
+        boxed_button("Cancel", UiAction::ConfirmCancel, ButtonVariant::Normal),
+        boxed_button(
+            "Leave Game",
+            UiAction::ConfirmAccept,
+            ButtonVariant::Primary,
+        ),
+    ];
+    Box::new(bsn_list![modal("Start a New Game?", body, actions)])
+}
+
+fn scores_dialog(snapshot: &UiSnapshot) -> Box<dyn SceneList> {
+    let mut groups: BTreeMap<(usize, usize, usize), Vec<_>> = BTreeMap::new();
+    for score in &snapshot.scores {
+        groups
+            .entry((score.width, score.height, score.mines))
+            .or_default()
+            .push(score);
+    }
+    let mut text = String::new();
+    if groups.is_empty() {
+        text.push_str("No scores yet. Finish a game to set your first record.");
+    } else {
+        for ((width, height, mines), scores) in groups {
+            text.push_str(&format!("{width} x {height} - {mines} mines\n"));
+            for (rank, score) in scores.iter().take(10).enumerate() {
+                text.push_str(&format!(
+                    "  {:>2}. {}\n",
+                    rank + 1,
+                    format_time(score.seconds)
+                ));
+            }
+            text.push('\n');
+        }
+    }
+    let body = Box::new(bsn_list![
+        (
+            Text({text})
+            TextFont { font_size: FontSize::Px(17.0) }
+            TextColor(Color::srgb(0.18, 0.18, 0.20))
+        )
+    ]);
+    let actions = vec![boxed_button(
+        "Close",
+        UiAction::CloseDialog,
+        ButtonVariant::Primary,
+    )];
+    Box::new(bsn_list![modal("Scores", body, actions)])
+}
+
+fn appearance_dialog(snapshot: &UiSnapshot, assets: &ThemeAssets) -> Box<dyn SceneList> {
+    let cards: Vec<_> = THEMES
+        .iter()
+        .enumerate()
+        .map(|(index, (_, label))| {
+            theme_card(
+                index,
+                label,
+                snapshot.settings.theme == THEMES[index].0,
+                assets.themes[index][8].clone(),
+            )
+        })
+        .collect();
+    let body = Box::new(bsn_list![
+        (
+            Node {
+                width: percent(100),
+                flex_wrap: FlexWrap::Wrap,
+                justify_content: JustifyContent::Center,
+            }
+            Children [{cards}]
+        )
+    ]);
+    let actions = vec![boxed_button(
+        "Done",
+        UiAction::CloseDialog,
+        ButtonVariant::Primary,
+    )];
+    Box::new(bsn_list![modal("Appearance", body, actions)])
+}
+
+fn theme_card(index: usize, label: &str, selected: bool, image: Handle<Image>) -> impl Scene {
+    let label = if selected {
+        format!("✓ {label}")
+    } else {
+        label.to_owned()
+    };
+    bsn! {
+        @FeathersButton {
+            @caption: bsn! {
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Center,
+                    row_gap: px(7),
+                }
+                Children [
+                    (
+                        ImageNode { image: {image} }
+                        Node { width: px(68), height: px(68) }
+                    ),
+                    (
+                        Text({label})
+                        TextFont { font_size: FontSize::Px(16.0) }
+                        ThemedText
+                    )
+                ]
+            }
+        }
+        ActionTarget { action: UiAction::Theme(index) }
+        Node {
+            width: px(135),
+            height: px(120),
+            margin: px(5),
+        }
+        on(handle_action)
     }
 }
 
-fn render_victory(ctx: &egui::Context, app: &mut MinesApp) {
-    let Some(board) = app.board.as_ref() else {
-        app.dialog = None;
+fn shortcuts_dialog() -> Box<dyn SceneList> {
+    let text = "\
+New Game                 Ctrl+N
+Restart                  Ctrl+R
+Pause / Resume           Pause
+Help                     F1
+Menu                     F10 / Ctrl+?
+Quit                     Ctrl+Q / Ctrl+W
+
+Small / Medium / Large   1 / 2 / 3
+Custom                   4
+Move                     Arrow keys or U J H K
+Reveal / Clear Around    Space
+Flag                     Ctrl+Space";
+    let body = Box::new(bsn_list![
+        (
+            Text(text)
+            TextFont { font_size: FontSize::Px(17.0) }
+            TextColor(Color::srgb(0.18, 0.18, 0.20))
+        )
+    ]);
+    let actions = vec![boxed_button(
+        "Close",
+        UiAction::CloseDialog,
+        ButtonVariant::Primary,
+    )];
+    Box::new(bsn_list![modal("Keyboard Shortcuts", body, actions)])
+}
+
+const HELP_PAGES: [(&str, &str); 4] = [
+    (
+        "Goal",
+        "Clear the minefield without detonating a mine. Numbers show how many mines touch a square.",
+    ),
+    (
+        "Clearing",
+        "Select a covered square to reveal it. Revealing an empty area automatically clears its connected neighbours.",
+    ),
+    (
+        "Flags and Chording",
+        "Right-click or long-press to mark a suspected mine. Select a revealed number after placing the matching flags to clear around it.",
+    ),
+    (
+        "Controls",
+        "Use the mouse, touch, or keyboard. The first revealed square and all of its neighbours are always safe.",
+    ),
+];
+
+fn help_dialog(snapshot: &UiSnapshot) -> Box<dyn SceneList> {
+    let page = snapshot.help_page.min(HELP_PAGES.len() - 1);
+    let (title, text) = HELP_PAGES[page];
+    let counter = format!("{} of {}", page + 1, HELP_PAGES.len());
+    let body = Box::new(bsn_list![
+        (
+            Text(title)
+            TextFont { font_size: FontSize::Px(23.0) }
+            TextColor(Color::srgb(0.16, 0.16, 0.18))
+        ),
+        (
+            Text(text)
+            TextFont { font_size: FontSize::Px(18.0) }
+            TextColor(Color::srgb(0.24, 0.24, 0.26))
+        ),
+        (
+            Text({counter})
+            TextFont { font_size: FontSize::Px(14.0) }
+            TextColor(Color::srgb(0.43, 0.43, 0.45))
+        )
+    ]);
+    let actions = vec![
+        boxed_button("Previous", UiAction::HelpPrevious, ButtonVariant::Normal),
+        boxed_button("Next", UiAction::HelpNext, ButtonVariant::Normal),
+        boxed_button("Close", UiAction::CloseDialog, ButtonVariant::Primary),
+    ];
+    Box::new(bsn_list![modal("Mines Help", body, actions)])
+}
+
+fn about_dialog() -> Box<dyn SceneList> {
+    let body = Box::new(bsn_list![
+        (
+            Text("Mines 50.0")
+            TextFont { font_size: FontSize::Px(25.0) }
+            TextColor(Color::srgb(0.16, 0.16, 0.18))
+        ),
+        (
+            Text("A faithful GNOME Mines recreation built with Bevy 0.19 native UI, BSN scenes, Feathers widgets, and App Settings.")
+            TextFont { font_size: FontSize::Px(17.0) }
+            TextColor(Color::srgb(0.24, 0.24, 0.26))
+        ),
+        (
+            Text("Artwork from GNOME Mines. Licensed GPL-3.0-or-later.")
+            TextFont { font_size: FontSize::Px(15.0) }
+            TextColor(Color::srgb(0.40, 0.40, 0.42))
+        )
+    ]);
+    let actions = vec![boxed_button(
+        "Close",
+        UiAction::CloseDialog,
+        ButtonVariant::Primary,
+    )];
+    Box::new(bsn_list![modal("About Mines", body, actions)])
+}
+
+fn victory_dialog(snapshot: &UiSnapshot) -> Box<dyn SceneList> {
+    let time = format!(
+        "You cleared the minefield in {}.",
+        format_time(snapshot.elapsed)
+    );
+    let body = Box::new(bsn_list![
+        (
+            Text("Well done!")
+            TextFont { font_size: FontSize::Px(28.0) }
+            TextColor(Color::srgb(0.12, 0.45, 0.20))
+        ),
+        (
+            Text({time})
+            TextFont { font_size: FontSize::Px(19.0) }
+            TextColor(Color::srgb(0.20, 0.20, 0.22))
+        )
+    ]);
+    let actions = vec![
+        boxed_button(
+            "New Game",
+            UiAction::Request(PendingAction::ShowNewGame),
+            ButtonVariant::Normal,
+        ),
+        boxed_button(
+            "Play Again",
+            UiAction::Request(PendingAction::Restart),
+            ButtonVariant::Primary,
+        ),
+    ];
+    Box::new(bsn_list![modal("Victory", body, actions)])
+}
+
+fn action_button(label: &str, action: UiAction, variant: ButtonVariant) -> impl Scene {
+    let label = label.to_owned();
+    bsn! {
+        @FeathersButton {
+            @caption: bsn! { Text({label}) ThemedText },
+            @variant: {variant},
+        }
+        ActionTarget { action: {action} }
+        on(handle_action)
+    }
+}
+
+fn boxed_button(label: &str, action: UiAction, variant: ButtonVariant) -> Box<dyn SceneList> {
+    Box::new(bsn_list![action_button(label, action, variant)])
+}
+
+fn handle_action(
+    activate: On<Activate>,
+    targets: Query<&ActionTarget>,
+    mut app: ResMut<MinesApp>,
+    mut settings: ResMut<Settings>,
+    mut commands: Commands,
+) {
+    let Ok(target) = targets.get(activate.event_target()) else {
         return;
     };
-    let elapsed = app.clock.elapsed().as_secs_f64().round() as u64;
-    let description = format!(
-        "{} × {}, {} mines",
-        board.width, board.height, board.mine_count
-    );
-    modal("Minefield Cleared!")
-        .default_width(390.0)
-        .min_width(390.0)
-        .max_width(390.0)
-        .show(ctx, |ui| {
-            ui.vertical_centered(|ui| {
-                ui.label(
-                    egui::RichText::new("✓")
-                        .size(48.0)
-                        .color(egui::Color32::from_rgb(38, 162, 105)),
-                );
-                ui.heading(format_duration(elapsed));
-                ui.label(description);
-                ui.label("Your score has been saved.");
-                ui.add_space(12.0);
-                ui.horizontal(|ui| {
-                    if ui.button("Scores").clicked() {
-                        app.dialog = Some(Dialog::Scores);
-                    }
-                    if ui
-                        .add(
-                            egui::Button::new("Play Again")
-                                .fill(egui::Color32::from_rgb(53, 132, 228)),
-                        )
-                        .clicked()
-                    {
-                        app.execute(PendingAction::Restart);
-                    }
-                });
+    match target.action {
+        UiAction::None => {}
+        UiAction::Request(action) => app.request(action, &mut settings),
+        UiAction::ShowCustom => {
+            app.screen = Screen::Custom;
+            app.dialog = None;
+            app.layout_dirty = true;
+        }
+        UiAction::TogglePause => app.toggle_pause(),
+        UiAction::Open(kind) => {
+            app.dialog = Some(match kind {
+                DialogKind::Menu => Dialog::Menu,
+                DialogKind::Scores => Dialog::Scores,
+                DialogKind::Appearance => Dialog::Appearance,
+                DialogKind::Shortcuts => Dialog::Shortcuts,
+                DialogKind::Help => Dialog::Help,
+                DialogKind::About => Dialog::About,
             });
-        });
-}
-
-fn format_duration(seconds: u64) -> String {
-    if seconds >= 3600 {
-        format!(
-            "{:02}∶{:02}∶{:02}",
-            seconds / 3600,
-            (seconds % 3600) / 60,
-            seconds % 60
-        )
-    } else {
-        format!("{:02}∶{:02}", seconds / 60, seconds % 60)
+            app.layout_dirty = true;
+        }
+        UiAction::CloseDialog => {
+            app.dialog = None;
+            app.layout_dirty = true;
+        }
+        UiAction::ConfirmAccept => {
+            if let Some(Dialog::Confirm(state)) = app.dialog {
+                app.execute(state.action, &mut settings);
+            }
+        }
+        UiAction::ConfirmCancel => {
+            if let Some(Dialog::Confirm(state)) = app.dialog {
+                app.paused = state.was_paused;
+                app.pause_requested = state.was_pause_requested;
+                if app.paused {
+                    app.clock.pause();
+                } else {
+                    app.clock.resume();
+                }
+            }
+            app.dialog = None;
+            app.layout_dirty = true;
+        }
+        UiAction::Theme(index) => {
+            if let Some((name, _)) = THEMES.get(index) {
+                settings.theme = (*name).to_owned();
+                app.layout_dirty = true;
+            }
+        }
+        UiAction::HelpPrevious => {
+            app.help_page = app.help_page.saturating_sub(1);
+            app.layout_dirty = true;
+        }
+        UiAction::HelpNext => {
+            app.help_page = (app.help_page + 1).min(HELP_PAGES.len() - 1);
+            app.layout_dirty = true;
+        }
+        UiAction::Quit => {
+            commands.queue(SaveSettingsSync::IfChanged);
+            commands.write_message(AppExit::Success);
+        }
     }
 }
 
-fn handle_keyboard(
-    ctx: &egui::Context,
-    keyboard: &ButtonInput<KeyCode>,
-    app: &mut MinesApp,
-    exit: &mut MessageWriter<AppExit>,
+fn setting_changed(
+    change: On<ValueChange<bool>>,
+    targets: Query<&SettingTarget>,
+    mut settings: ResMut<Settings>,
+    mut app: ResMut<MinesApp>,
 ) {
-    let ctrl = keyboard.pressed(KeyCode::ControlLeft) || keyboard.pressed(KeyCode::ControlRight);
-    let shift = keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight);
+    let Ok(target) = targets.get(change.event_target()) else {
+        return;
+    };
+    match target.key {
+        SettingKey::QuestionMarks => settings.use_question_marks = change.value,
+        SettingKey::AutoClear => settings.auto_clear_on_flags = change.value,
+    }
+    app.layout_dirty = true;
+}
 
-    if ctrl && keyboard.just_pressed(KeyCode::KeyQ) || ctrl && keyboard.just_pressed(KeyCode::KeyW)
-    {
-        app.persistent.save();
-        exit.write(AppExit::Success);
+pub fn sync_setting_widgets(
+    settings: Res<Settings>,
+    widgets: Query<(Entity, &SettingTarget, Has<Checked>)>,
+    mut commands: Commands,
+) {
+    for (entity, target, checked) in &widgets {
+        let expected = match target.key {
+            SettingKey::QuestionMarks => settings.use_question_marks,
+            SettingKey::AutoClear => settings.auto_clear_on_flags,
+        };
+        if expected && !checked {
+            commands.entity(entity).insert(Checked);
+        } else if !expected && checked {
+            commands.entity(entity).remove::<Checked>();
+        }
+    }
+}
+
+fn custom_value_changed(
+    change: On<ValueChange<i32>>,
+    inputs: Query<&CustomInput>,
+    mut settings: ResMut<Settings>,
+    mut app: ResMut<MinesApp>,
+) {
+    if !change.is_final {
         return;
     }
+    let Ok(input) = inputs.get(change.event_target()) else {
+        return;
+    };
+    let old_size = settings.custom_width * settings.custom_height;
+    let old_percentage = 100.0 * settings.custom_mines as f64 / old_size as f64;
+    match input.field {
+        CustomField::Width => settings.custom_width = change.value.clamp(4, 100) as usize,
+        CustomField::Height => settings.custom_height = change.value.clamp(4, 100) as usize,
+        CustomField::Percentage => {
+            let size = settings.custom_width * settings.custom_height;
+            settings.custom_mines = ((change.value.clamp(1, 99) as f64 * size as f64 / 100.0)
+                .round() as usize)
+                .clamp(1, size - 10);
+        }
+    }
+    if !matches!(input.field, CustomField::Percentage) {
+        let size = settings.custom_width * settings.custom_height;
+        settings.custom_mines =
+            ((old_percentage * size as f64 / 100.0).round() as usize).clamp(1, size - 10);
+    }
+    app.layout_dirty = true;
+}
+
+pub fn initialize_number_inputs(
+    inputs: Query<(Entity, &CustomInput), Added<CustomInput>>,
+    children: Query<&Children>,
+    mut text_inputs: Query<&mut EditableText>,
+    settings: Res<Settings>,
+    mut commands: Commands,
+) {
+    for (entity, input) in &inputs {
+        let value = match input.field {
+            CustomField::Width => settings.custom_width as i32,
+            CustomField::Height => settings.custom_height as i32,
+            CustomField::Percentage => (100.0 * settings.custom_mines as f64
+                / (settings.custom_width * settings.custom_height) as f64)
+                .round() as i32,
+        };
+        if let Ok(children) = children.get(entity) {
+            for child in children.iter() {
+                if let Ok(mut text) = text_inputs.get_mut(child) {
+                    text.queue_edit(TextEdit::SelectAll);
+                    text.queue_edit(TextEdit::Insert(value.to_string().into()));
+                    commands
+                        .entity(child)
+                        .insert(TextColor(Color::srgb(0.12, 0.12, 0.13)));
+                    break;
+                }
+            }
+        }
+        commands.delayed().secs(0.05).trigger(UpdateNumberInput {
+            entity,
+            value: NumberInputValue::I32(value),
+        });
+    }
+}
+
+fn cell_clicked(
+    mut click: On<Pointer<Click>>,
+    cells: Query<&CellTarget>,
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut app: ResMut<MinesApp>,
+    settings: Res<Settings>,
+) {
+    if click.pointer_id.is_touch() {
+        return;
+    }
+    let Ok(target) = cells.get(click.event_target()) else {
+        return;
+    };
+    click.propagate(false);
+    app.keyboard_active = false;
+    let Some(board) = app.board.as_ref() else {
+        return;
+    };
+    let (x, y) = board.coords(target.index);
+    let ctrl_pressed =
+        keyboard.pressed(KeyCode::ControlLeft) || keyboard.pressed(KeyCode::ControlRight);
+    let action = match click.button {
+        PointerButton::Secondary => CellAction::Mark(x, y),
+        PointerButton::Primary if ctrl_pressed => CellAction::Mark(x, y),
+        PointerButton::Primary if board.cells[target.index].revealed => CellAction::Chord(x, y),
+        PointerButton::Primary => CellAction::Reveal(x, y),
+        _ => return,
+    };
+    app.apply_cell_action(action, &settings);
+}
+
+fn cell_pressed(press: On<Pointer<Press>>, cells: Query<&CellTarget>, mut hold: ResMut<TouchHold>) {
+    let Some(touch_id) = press.pointer_id.get_touch_id() else {
+        return;
+    };
+    let Ok(target) = cells.get(press.event_target()) else {
+        return;
+    };
+    hold.active = Some((touch_id, target.index, Instant::now()));
+}
+
+fn cell_released(
+    mut release: On<Pointer<Release>>,
+    cells: Query<&CellTarget>,
+    mut hold: ResMut<TouchHold>,
+    mut app: ResMut<MinesApp>,
+    settings: Res<Settings>,
+) {
+    let Some(touch_id) = release.pointer_id.get_touch_id() else {
+        return;
+    };
+    let Ok(target) = cells.get(release.event_target()) else {
+        return;
+    };
+    let Some((held_id, held_index, started)) = hold.active.take() else {
+        return;
+    };
+    if held_id != touch_id || held_index != target.index {
+        return;
+    }
+    release.propagate(false);
+    app.keyboard_active = false;
+    let Some(board) = app.board.as_ref() else {
+        return;
+    };
+    let (x, y) = board.coords(target.index);
+    let action = if started.elapsed() >= LONG_PRESS {
+        CellAction::Mark(x, y)
+    } else if board.cells[target.index].revealed {
+        CellAction::Chord(x, y)
+    } else {
+        CellAction::Reveal(x, y)
+    };
+    app.apply_cell_action(action, &settings);
+}
+
+pub fn keyboard_shortcuts(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    focus: Res<InputFocus>,
+    editable: Query<(), With<EditableText>>,
+    mut app: ResMut<MinesApp>,
+    mut settings: ResMut<Settings>,
+    mut commands: Commands,
+) {
+    if focus.get().is_some_and(|entity| editable.contains(entity)) {
+        return;
+    }
+    let ctrl = keyboard.pressed(KeyCode::ControlLeft) || keyboard.pressed(KeyCode::ControlRight);
+
+    if (ctrl && keyboard.just_pressed(KeyCode::KeyQ))
+        || (ctrl && keyboard.just_pressed(KeyCode::KeyW))
+    {
+        commands.queue(SaveSettingsSync::IfChanged);
+        commands.write_message(AppExit::Success);
+        return;
+    }
+    if keyboard.just_pressed(KeyCode::F1) {
+        app.dialog = Some(Dialog::Help);
+        app.layout_dirty = true;
+    }
+    if keyboard.just_pressed(KeyCode::F10) || (ctrl && keyboard.just_pressed(KeyCode::Slash)) {
+        app.dialog = Some(Dialog::Menu);
+        app.layout_dirty = true;
+    }
+    if keyboard.just_pressed(KeyCode::Escape) {
+        if let Some(Dialog::Confirm(state)) = app.dialog {
+            app.paused = state.was_paused;
+            app.pause_requested = state.was_pause_requested;
+            if app.paused {
+                app.clock.pause();
+            } else {
+                app.clock.resume();
+            }
+            app.dialog = None;
+        } else if app.dialog.take().is_none() && app.screen != Screen::NewGame {
+            app.request(PendingAction::ShowNewGame, &mut settings);
+        }
+        app.layout_dirty = true;
+    }
     if ctrl && keyboard.just_pressed(KeyCode::KeyN) {
-        app.request(PendingAction::ShowNewGame);
+        app.request(PendingAction::ShowNewGame, &mut settings);
     }
     if ctrl && keyboard.just_pressed(KeyCode::KeyR) {
-        app.request(PendingAction::Restart);
+        app.request(PendingAction::Restart, &mut settings);
     }
     if keyboard.just_pressed(KeyCode::Pause) {
         app.toggle_pause();
     }
-    if keyboard.just_pressed(KeyCode::F1) {
-        app.open_dialog(Dialog::Help);
+    if keyboard.just_pressed(KeyCode::Digit1) {
+        app.request(PendingAction::Start(Difficulty::Small), &mut settings);
     }
-    if keyboard.just_pressed(KeyCode::F10) {
-        app.open_dialog(Dialog::Menu);
+    if keyboard.just_pressed(KeyCode::Digit2) {
+        app.request(PendingAction::Start(Difficulty::Medium), &mut settings);
     }
-    if ctrl && shift && keyboard.just_pressed(KeyCode::Slash) {
-        app.open_dialog(Dialog::Shortcuts);
+    if keyboard.just_pressed(KeyCode::Digit3) {
+        app.request(PendingAction::Start(Difficulty::Large), &mut settings);
     }
-    if keyboard.just_pressed(KeyCode::Digit1) || keyboard.just_pressed(KeyCode::Numpad1) {
-        app.request(PendingAction::Start(Difficulty::Small));
-    }
-    if keyboard.just_pressed(KeyCode::Digit2) || keyboard.just_pressed(KeyCode::Numpad2) {
-        app.request(PendingAction::Start(Difficulty::Medium));
-    }
-    if keyboard.just_pressed(KeyCode::Digit3) || keyboard.just_pressed(KeyCode::Numpad3) {
-        app.request(PendingAction::Start(Difficulty::Large));
-    }
-    if keyboard.just_pressed(KeyCode::Digit4) || keyboard.just_pressed(KeyCode::Numpad4) {
-        if app
-            .board
-            .as_ref()
-            .is_some_and(|board| board.revealed_count > 0 && board.outcome == Outcome::InProgress)
-        {
-            app.request(PendingAction::ShowNewGame);
-        }
+    if keyboard.just_pressed(KeyCode::Digit4) {
         app.screen = Screen::Custom;
+        app.dialog = None;
+        app.layout_dirty = true;
     }
 
-    if keyboard.just_pressed(KeyCode::Escape)
-        && app.dialog.is_none()
-        && app
-            .board
-            .as_ref()
-            .is_none_or(|board| board.revealed_count == 0)
-    {
-        app.execute(PendingAction::ShowNewGame);
-    }
-
-    if app.screen != Screen::Game
-        || app.dialog.is_some()
-        || app.paused
-        || ctx.egui_wants_keyboard_input()
-    {
+    if app.dialog.is_some() || app.screen != Screen::Game || app.paused {
         return;
     }
-    let Some(board) = app.board.as_ref() else {
-        return;
+    let (width, height, mut x, mut y) = {
+        let Some(board) = app.board.as_ref() else {
+            return;
+        };
+        let (x, y) = board.coords(app.keyboard_cursor.min(board.cells.len() - 1));
+        (board.width, board.height, x, y)
     };
-    if board.outcome != Outcome::InProgress {
-        return;
-    }
-    let (mut x, mut y) = board.coords(app.keyboard_cursor);
-    let mut moved = false;
+    let old = (x, y);
     if keyboard.just_pressed(KeyCode::ArrowLeft) || keyboard.just_pressed(KeyCode::KeyH) {
-        x = (x + board.width - 1) % board.width;
-        moved = true;
+        x = x.saturating_sub(1);
     }
-    if keyboard.just_pressed(KeyCode::ArrowRight) || keyboard.just_pressed(KeyCode::KeyK) {
-        x = (x + 1) % board.width;
-        moved = true;
+    if keyboard.just_pressed(KeyCode::ArrowRight) || keyboard.just_pressed(KeyCode::KeyL) {
+        x = (x + 1).min(width - 1);
     }
     if keyboard.just_pressed(KeyCode::ArrowUp) || keyboard.just_pressed(KeyCode::KeyU) {
-        y = (y + board.height - 1) % board.height;
-        moved = true;
+        y = y.saturating_sub(1);
     }
     if keyboard.just_pressed(KeyCode::ArrowDown) || keyboard.just_pressed(KeyCode::KeyJ) {
-        y = (y + 1) % board.height;
-        moved = true;
+        y = (y + 1).min(height - 1);
     }
-    if moved {
-        app.keyboard_cursor = y * board.width + x;
+    if (x, y) != old {
+        app.keyboard_cursor = y * width + x;
         app.keyboard_active = true;
+        app.layout_dirty = true;
     }
     if keyboard.just_pressed(KeyCode::Space) {
         app.keyboard_active = true;
+        let index = y * width + x;
+        let revealed = app
+            .board
+            .as_ref()
+            .is_some_and(|board| board.cells[index].revealed);
         let action = if ctrl {
             CellAction::Mark(x, y)
-        } else if board.cells[board.index(x, y)].revealed {
+        } else if revealed {
             CellAction::Chord(x, y)
         } else {
             CellAction::Reveal(x, y)
         };
-        app.apply_cell_action(action);
+        app.apply_cell_action(action, &settings);
+    }
+}
+
+pub fn update_clock_text(app: Res<MinesApp>, mut clock: Query<&mut Text, With<ClockText>>) {
+    let value = format_time(app.clock.elapsed().as_secs());
+    for mut text in &mut clock {
+        if text.0 != value {
+            text.0.clone_from(&value);
+        }
     }
 }
 
@@ -1394,6 +1995,26 @@ pub fn window_focus_pause(
             app.set_paused(false, false);
         }
     }
+}
+
+pub fn schedule_settings_save(settings: Res<Settings>, mut commands: Commands) {
+    if settings.is_changed() {
+        commands.queue(SaveSettingsDeferred(Duration::from_millis(400)));
+    }
+}
+
+pub fn close_and_save(mut close: MessageReader<WindowCloseRequested>, mut commands: Commands) {
+    if close.read().next().is_some() {
+        commands.queue(SaveSettingsSync::IfChanged);
+        commands.write_message(AppExit::Success);
+    }
+}
+
+pub fn apply_window_settings(mut window: Single<&mut Window>, settings: Res<Settings>) {
+    window.resolution.set(
+        settings.window_width.max(480.0),
+        settings.window_height.max(400.0),
+    );
 }
 
 pub fn native_window_sync(world: &mut World) {
@@ -1417,31 +2038,25 @@ pub fn native_window_sync(world: &mut World) {
     };
 
     if needs_initialization {
-        let start_maximized = world
-            .resource::<MinesApp>()
-            .persistent
-            .settings
-            .window_maximized;
-        let Some(icon) = make_window_icon() else {
-            return;
-        };
-        let initialized = bevy::winit::WINIT_WINDOWS.with_borrow(|windows| {
-            let Some(window) = windows.get_window(window_entity) else {
-                return false;
-            };
-            window.set_window_icon(Some(icon));
-            window.set_maximized(start_maximized);
-            true
-        });
-        if initialized {
-            world.resource_mut::<NativeWindowState>().initialized = true;
+        let start_maximized = world.resource::<Settings>().window_maximized;
+        if let Some(icon) = make_window_icon() {
+            let initialized = bevy::winit::WINIT_WINDOWS.with_borrow(|windows| {
+                let Some(window) = windows.get_window(window_entity) else {
+                    return false;
+                };
+                window.set_window_icon(Some(icon));
+                window.set_maximized(start_maximized);
+                true
+            });
+            if initialized {
+                world.resource_mut::<NativeWindowState>().initialized = true;
+            }
         }
     }
 
     if !should_save {
         return;
     }
-
     let Some(window) = world.get::<Window>(window_entity) else {
         return;
     };
@@ -1452,23 +2067,14 @@ pub fn native_window_sync(world: &mut World) {
             .get_window(window_entity)
             .map(|window| window.is_maximized())
     });
-    let mut app = world.resource_mut::<MinesApp>();
-    let settings = &mut app.persistent.settings;
-    let mut changed = false;
+    let mut settings = world.resource_mut::<Settings>();
     if (width - settings.window_width).abs() > 0.5 || (height - settings.window_height).abs() > 0.5
     {
         settings.window_width = width;
         settings.window_height = height;
-        changed = true;
     }
-    if let Some(maximized) = maximized
-        && maximized != settings.window_maximized
-    {
+    if let Some(maximized) = maximized {
         settings.window_maximized = maximized;
-        changed = true;
-    }
-    if changed {
-        app.persistent.save();
     }
 }
 
@@ -1480,10 +2086,25 @@ fn make_window_icon() -> Option<Icon> {
     )
     .ok()?;
     let mut pixmap = resvg::tiny_skia::Pixmap::new(SIZE, SIZE)?;
+    let tree_size = tree.size();
     resvg::render(
         &tree,
-        resvg::tiny_skia::Transform::identity(),
+        resvg::tiny_skia::Transform::from_scale(
+            SIZE as f32 / tree_size.width(),
+            SIZE as f32 / tree_size.height(),
+        ),
         &mut pixmap.as_mut(),
     );
     Icon::from_rgba(pixmap.take(), SIZE, SIZE).ok()
+}
+
+fn theme_index(name: &str) -> usize {
+    THEMES
+        .iter()
+        .position(|(theme, _)| *theme == name)
+        .unwrap_or_default()
+}
+
+fn format_time(seconds: u64) -> String {
+    format!("{:02}:{:02}", seconds / 60, seconds % 60)
 }

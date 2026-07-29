@@ -1,11 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+use bevy::{
+    prelude::*,
+    settings::{ReflectSettingsGroup, SettingsGroup},
+};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Reflect, Default)]
+#[reflect(Default)]
 pub enum Difficulty {
     #[default]
     Small,
@@ -30,7 +35,9 @@ impl Difficulty {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Resource, SettingsGroup, Reflect, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[reflect(Resource, SettingsGroup, Default)]
+#[settings_group(group = "game")]
 #[serde(default)]
 pub struct Settings {
     pub theme: String,
