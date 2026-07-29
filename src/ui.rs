@@ -564,22 +564,26 @@ pub fn startup_scene() -> impl SceneList {
 }
 
 pub fn setup_assets(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
+    let mut svg_options = resvg::usvg::Options::default();
+    svg_options.fontdb_mut().load_system_fonts();
     let themes = TILE_SVGS
         .iter()
         .map(|theme| {
             theme
                 .iter()
-                .map(|bytes| images.add(svg_image(bytes, 128)))
+                .map(|bytes| images.add(svg_image(bytes, 128, &svg_options)))
                 .collect()
         })
         .collect();
     let flag = images.add(svg_image(
         include_bytes!("../assets/icons/flag-symbolic.svg"),
         64,
+        &svg_options,
     ));
     let stopwatch = images.add(svg_image(
         include_bytes!("../assets/icons/stopwatch-symbolic.svg"),
         64,
+        &svg_options,
     ));
     commands.insert_resource(ThemeAssets {
         themes,
@@ -588,10 +592,9 @@ pub fn setup_assets(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     });
 }
 
-fn svg_image(bytes: &[u8], size: u32) -> Image {
-    let options = resvg::usvg::Options::default();
-    let tree = resvg::usvg::Tree::from_data(bytes, &options)
-        .expect("GNOME Mines SVG assets must be valid");
+fn svg_image(bytes: &[u8], size: u32, options: &resvg::usvg::Options<'_>) -> Image {
+    let tree =
+        resvg::usvg::Tree::from_data(bytes, options).expect("GNOME Mines SVG assets must be valid");
     let mut pixmap =
         resvg::tiny_skia::Pixmap::new(size, size).expect("theme texture allocation failed");
     let tree_size = tree.size();
@@ -2107,4 +2110,27 @@ fn theme_index(name: &str) -> usize {
 
 fn format_time(seconds: u64) -> String {
     format!("{:02}:{:02}", seconds / 60, seconds % 60)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_legacy_number_svg_rasterizes_text() {
+        let mut options = resvg::usvg::Options::default();
+        options.fontdb_mut().load_system_fonts();
+        for (theme_index, theme) in TILE_SVGS.iter().take(3).enumerate() {
+            for (number_index, svg) in theme.iter().take(8).enumerate() {
+                let image = svg_image(svg, 128, &options);
+                let pixels = image.data.expect("raster image data should be retained");
+
+                assert!(
+                    pixels.chunks_exact(4).any(|pixel| pixel[3] != 0),
+                    "theme {theme_index} number {} rendered as a transparent image",
+                    number_index + 1
+                );
+            }
+        }
+    }
 }
