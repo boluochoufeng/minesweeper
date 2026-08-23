@@ -22,10 +22,10 @@ use bevy::{
     prelude::*,
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
     settings::{SaveSettingsDeferred, SaveSettingsSync},
-    text::{EditableText, TextEdit},
+    text::{EditableText, FontSource, TextEdit},
     ui::Checked,
     ui_widgets::{Activate, ValueChange, checkbox_self_update},
-    window::{PrimaryWindow, WindowCloseRequested, WindowFocused},
+    window::{PrimaryWindow, WindowCloseRequested, WindowFocused, WindowResized},
 };
 use rand::rng;
 use std::collections::{BTreeMap, BTreeSet};
@@ -33,10 +33,10 @@ use std::time::{Duration, Instant};
 use winit::window::Icon;
 
 const THEMES: [(&str, &str); 4] = [
-    ("bgcolors", "Background Colors"),
-    ("classic", "Classic"),
-    ("default", "Default"),
-    ("modern", "Modern"),
+    ("bgcolors", "背景颜色"),
+    ("classic", "经典"),
+    ("default", "默认"),
+    ("modern", "现代"),
 ];
 const LONG_PRESS: Duration = Duration::from_millis(500);
 const NUMBER_COLORS: [(&str, [u8; 3]); 8] = [
@@ -619,7 +619,8 @@ struct UiSnapshot {
     dialog: Option<Dialog>,
     help_page: usize,
     elapsed: u64,
-    viewport_ratio: f32,
+    viewport_size: Vec2,
+    scale_factor: f32,
     settings: Settings,
     scores: Vec<crate::storage::Score>,
     screen_transition: bool,
@@ -768,16 +769,18 @@ pub fn rebuild_ui(world: &mut World) {
         world.despawn(root);
     }
 
-    let viewport_ratio = {
+    let (viewport_size, scale_factor) = {
         let mut windows = world.query_filtered::<&Window, With<PrimaryWindow>>();
         windows
             .iter(world)
             .next()
             .map(|window| {
-                (window.resolution.width() - 40.0).max(1.0)
-                    / (window.resolution.height() - 150.0).max(1.0)
+                (
+                    Vec2::new(window.resolution.width(), window.resolution.height()),
+                    window.resolution.scale_factor(),
+                )
             })
-            .unwrap_or(1.0)
+            .unwrap_or((Vec2::new(600.0, 600.0), 1.0))
     };
     let snapshot = {
         let app = world.resource::<MinesApp>();
@@ -790,7 +793,8 @@ pub fn rebuild_ui(world: &mut World) {
             dialog: app.dialog,
             help_page: app.help_page,
             elapsed: app.clock.elapsed().as_secs(),
-            viewport_ratio,
+            viewport_size,
+            scale_factor,
             settings: world.resource::<Settings>().clone(),
             scores: app.persistent.scores.clone(),
             screen_transition: app.screen_transition,
@@ -853,7 +857,7 @@ fn app_scene(snapshot: UiSnapshot, assets: ThemeAssets) -> impl Scene {
 
 fn header_scene(snapshot: &UiSnapshot) -> Box<dyn SceneList> {
     let right = boxed_button(
-        "Menu",
+        "菜单",
         UiAction::Open(DialogKind::Menu),
         ButtonVariant::Normal,
     );
@@ -879,7 +883,7 @@ fn header_scene(snapshot: &UiSnapshot) -> Box<dyn SceneList> {
                         Pickable::IGNORE
                     ),
                     (
-                        Text("Mines")
+                        Text("扫雷")
                         TextFont { font_size: FontSize::Px(26.0) }
                         TextColor(Color::srgb(0.12, 0.12, 0.13))
                     ),
@@ -897,13 +901,13 @@ fn header_scene(snapshot: &UiSnapshot) -> Box<dyn SceneList> {
 
     let mut left: Vec<Box<dyn SceneList>> = Vec::new();
     left.push(boxed_button(
-        "<",
+        "返回",
         UiAction::Request(PendingAction::ShowNewGame),
         ButtonVariant::Plain,
     ));
     if snapshot.screen == Screen::Game {
         left.push(boxed_button(
-            "Restart",
+            "重新开始",
             UiAction::Request(PendingAction::Restart),
             ButtonVariant::Plain,
         ));
@@ -913,7 +917,7 @@ fn header_scene(snapshot: &UiSnapshot) -> Box<dyn SceneList> {
             .is_some_and(|board| board.outcome == Outcome::InProgress)
         {
             left.push(boxed_button(
-                if snapshot.paused { "Resume" } else { "Pause" },
+                if snapshot.paused { "继续" } else { "暂停" },
                 UiAction::TogglePause,
                 ButtonVariant::Plain,
             ));
@@ -942,7 +946,7 @@ fn header_scene(snapshot: &UiSnapshot) -> Box<dyn SceneList> {
                 Children [{left}]
             ),
             (
-                Text("Mines")
+                Text("扫雷")
                 TextFont { font_size: FontSize::Px(26.0) }
                 TextColor(Color::srgb(0.12, 0.12, 0.13))
             ),
@@ -969,21 +973,21 @@ fn screen_scene(snapshot: &UiSnapshot, assets: &ThemeAssets) -> Box<dyn SceneLis
 fn new_game_scene() -> impl Scene {
     let cards = vec![
         difficulty_card(
-            "8 x 8",
-            "10 mines",
+            "8 × 8",
+            "10 个雷",
             UiAction::Request(PendingAction::Start(Difficulty::Small)),
         ),
         difficulty_card(
-            "16 x 16",
-            "40 mines",
+            "16 × 16",
+            "40 个雷",
             UiAction::Request(PendingAction::Start(Difficulty::Medium)),
         ),
         difficulty_card(
-            "30 x 16",
-            "99 mines",
+            "30 × 16",
+            "99 个雷",
             UiAction::Request(PendingAction::Start(Difficulty::Large)),
         ),
-        difficulty_card("?", "Custom", UiAction::ShowCustom),
+        difficulty_card("?", "自定义", UiAction::ShowCustom),
     ];
     bsn! {
         Node {
@@ -995,7 +999,7 @@ fn new_game_scene() -> impl Scene {
         }
         Children [
             (
-                Text("Choose Difficulty")
+                Text("选择难度")
                 TextFont { font_size: FontSize::Px(36.0) }
                 TextColor(Color::srgb(0.32, 0.32, 0.34))
             ),
@@ -1030,16 +1034,16 @@ fn custom_scene(snapshot: &UiSnapshot) -> impl Scene {
         / (settings.custom_width * settings.custom_height) as f64)
         .round() as i32;
     let inputs = vec![
-        number_input("Width", CustomField::Width),
-        number_input("Height", CustomField::Height),
-        number_input("Mines (%)", CustomField::Percentage),
+        number_input("宽度", CustomField::Width),
+        number_input("高度", CustomField::Height),
+        number_input("雷区占比（%）", CustomField::Percentage),
     ];
     let summary = format!(
-        "{} x {} - {} mines ({}%)",
+        "{} × {}，{} 个雷（{}%）",
         settings.custom_width, settings.custom_height, settings.custom_mines, percentage
     );
     let start = bsn_list![action_button(
-        "Play",
+        "开始游戏",
         UiAction::Request(PendingAction::Start(Difficulty::Custom)),
         ButtonVariant::Primary,
     )];
@@ -1054,7 +1058,7 @@ fn custom_scene(snapshot: &UiSnapshot) -> impl Scene {
         }
         Children [
             (
-                Text("Custom Game")
+                Text("自定义游戏")
                 TextFont { font_size: FontSize::Px(34.0) }
                 TextColor(Color::srgb(0.22, 0.22, 0.24))
             ),
@@ -1108,24 +1112,16 @@ fn game_scene(snapshot: &UiSnapshot, assets: &ThemeAssets) -> impl Scene {
     let cells: Vec<_> = (0..board.cells.len())
         .map(|index| cell_scene(snapshot, index, textures))
         .collect();
-    let gap = if board.width.max(board.height) <= 16 {
-        2.0
-    } else if board.width.max(board.height) <= 30 {
-        1.0
-    } else {
-        0.0
-    };
-    let border = if board.width.max(board.height) <= 30 {
-        1.0
-    } else {
-        0.25
-    };
-    let board_ratio = board.width as f32 / board.height as f32;
-    let (board_width, board_height) = if board_ratio > snapshot.viewport_ratio {
-        (percent(100), Val::Auto)
-    } else {
-        (Val::Auto, percent(100))
-    };
+    let available_width = (snapshot.viewport_size.x - 40.0).clamp(1.0, 1100.0);
+    let available_height = (snapshot.viewport_size.y - 170.0).clamp(1.0, 820.0);
+    let cell_size = ((available_width / board.width as f32)
+        .min(available_height / board.height as f32)
+        * snapshot.scale_factor)
+        .floor()
+        .max(1.0)
+        / snapshot.scale_factor;
+    let board_width = cell_size * board.width as f32;
+    let board_height = cell_size * board.height as f32;
     let status = bsn_list![status_scene(snapshot, assets)];
     let pause_transition = UiTransition::pause();
     let pause_overlay: Box<dyn SceneList> = if snapshot.paused {
@@ -1143,7 +1139,7 @@ fn game_scene(snapshot: &UiSnapshot, assets: &ThemeAssets) -> impl Scene {
                 ZIndex(20)
                 BackgroundColor(Color::srgba(0.96, 0.96, 0.96, 0.86))
                 Children [(
-                    Text("Paused")
+                    Text("已暂停")
                     TextFont { font_size: FontSize::Px(44.0) }
                     TextColor(Color::srgb(0.18, 0.18, 0.20))
                     UiTransition {
@@ -1185,28 +1181,22 @@ fn game_scene(snapshot: &UiSnapshot, assets: &ThemeAssets) -> impl Scene {
                     (
                         Node {
                             display: Display::Grid,
-                            width: {board_width},
-                            height: {board_height},
-                            max_width: px(1100),
-                            max_height: px(820),
-                            aspect_ratio:
-                                {Some(board_ratio)},
+                            width: {px(board_width)},
+                            height: {px(board_height)},
                             grid_template_columns:
-                                {RepeatedGridTrack::flex::<Vec<RepeatedGridTrack>>(
+                                {RepeatedGridTrack::px::<Vec<RepeatedGridTrack>>(
                                     board.width as u16,
-                                    1.0,
+                                    cell_size,
                                 )},
                             grid_template_rows:
-                                {RepeatedGridTrack::flex::<Vec<RepeatedGridTrack>>(
+                                {RepeatedGridTrack::px::<Vec<RepeatedGridTrack>>(
                                     board.height as u16,
-                                    1.0,
+                                    cell_size,
                                 )},
-                            column_gap: {px(gap)},
-                            row_gap: {px(gap)},
-                            border: {px(border)},
+                            column_gap: px(0),
+                            row_gap: px(0),
                         }
                         BackgroundColor(Color::srgb(0.72, 0.72, 0.72))
-                        BorderColor::all(Color::srgb(0.62, 0.62, 0.62))
                         Children [{cells}]
                     ),
                     {pause_overlay}
@@ -1481,37 +1471,40 @@ fn modal(
 
 fn menu_dialog(snapshot: &UiSnapshot, animate: bool) -> Box<dyn SceneList> {
     let toggles = vec![
-        setting_checkbox("Question Marks", SettingKey::QuestionMarks),
-        setting_checkbox("Auto-clear on Flags", SettingKey::AutoClear),
+        setting_checkbox("使用问号标记", SettingKey::QuestionMarks),
+        setting_checkbox("插旗后自动清除", SettingKey::AutoClear),
     ];
     let items = vec![
         boxed_button(
-            "Scores",
+            "成绩",
             UiAction::Open(DialogKind::Scores),
             ButtonVariant::Normal,
         ),
         boxed_button(
-            "Appearance",
+            "外观",
             UiAction::Open(DialogKind::Appearance),
             ButtonVariant::Normal,
         ),
         boxed_button(
-            "Keyboard Shortcuts",
+            "键盘快捷键",
             UiAction::Open(DialogKind::Shortcuts),
             ButtonVariant::Normal,
         ),
         boxed_button(
-            "Help",
+            "帮助",
             UiAction::Open(DialogKind::Help),
             ButtonVariant::Normal,
         ),
         boxed_button(
-            "About Mines",
+            "关于扫雷",
             UiAction::Open(DialogKind::About),
             ButtonVariant::Normal,
         ),
     ];
-    let version = format!("Bevy 0.19 native UI - {} theme", snapshot.settings.theme);
+    let version = format!(
+        "Bevy 0.19 原生界面 · {}主题",
+        THEMES[theme_index(&snapshot.settings.theme)].1
+    );
     let body = Box::new(bsn_list![
         (
             Node {
@@ -1536,10 +1529,10 @@ fn menu_dialog(snapshot: &UiSnapshot, animate: bool) -> Box<dyn SceneList> {
         )
     ]);
     let actions = vec![
-        boxed_button("Quit", UiAction::Quit, ButtonVariant::Plain),
-        boxed_button("Close", UiAction::CloseDialog, ButtonVariant::Primary),
+        boxed_button("退出", UiAction::Quit, ButtonVariant::Plain),
+        boxed_button("关闭", UiAction::CloseDialog, ButtonVariant::Primary),
     ];
-    Box::new(bsn_list![modal("Menu", body, actions, animate)])
+    Box::new(bsn_list![modal("菜单", body, actions, animate)])
 }
 
 fn setting_checkbox(label: &str, key: SettingKey) -> impl Scene {
@@ -1557,25 +1550,16 @@ fn setting_checkbox(label: &str, key: SettingKey) -> impl Scene {
 fn confirm_dialog(animate: bool) -> Box<dyn SceneList> {
     let body = Box::new(bsn_list![
         (
-            Text("The current game will be lost.")
+            Text("当前游戏进度将会丢失。")
             TextFont { font_size: FontSize::Px(19.0) }
             TextColor(Color::srgb(0.22, 0.22, 0.24))
         )
     ]);
     let actions = vec![
-        boxed_button("Cancel", UiAction::ConfirmCancel, ButtonVariant::Normal),
-        boxed_button(
-            "Leave Game",
-            UiAction::ConfirmAccept,
-            ButtonVariant::Primary,
-        ),
+        boxed_button("取消", UiAction::ConfirmCancel, ButtonVariant::Normal),
+        boxed_button("离开游戏", UiAction::ConfirmAccept, ButtonVariant::Primary),
     ];
-    Box::new(bsn_list![modal(
-        "Start a New Game?",
-        body,
-        actions,
-        animate
-    )])
+    Box::new(bsn_list![modal("开始新游戏？", body, actions, animate)])
 }
 
 fn scores_dialog(snapshot: &UiSnapshot, animate: bool) -> Box<dyn SceneList> {
@@ -1588,10 +1572,10 @@ fn scores_dialog(snapshot: &UiSnapshot, animate: bool) -> Box<dyn SceneList> {
     }
     let mut text = String::new();
     if groups.is_empty() {
-        text.push_str("No scores yet. Finish a game to set your first record.");
+        text.push_str("暂无成绩。完成一局游戏即可记录首个成绩。");
     } else {
         for ((width, height, mines), scores) in groups {
-            text.push_str(&format!("{width} x {height} - {mines} mines\n"));
+            text.push_str(&format!("{width} × {height}，{mines} 个雷\n"));
             for (rank, score) in scores.iter().take(10).enumerate() {
                 text.push_str(&format!(
                     "  {:>2}. {}\n",
@@ -1610,11 +1594,11 @@ fn scores_dialog(snapshot: &UiSnapshot, animate: bool) -> Box<dyn SceneList> {
         )
     ]);
     let actions = vec![boxed_button(
-        "Close",
+        "关闭",
         UiAction::CloseDialog,
         ButtonVariant::Primary,
     )];
-    Box::new(bsn_list![modal("Scores", body, actions, animate)])
+    Box::new(bsn_list![modal("成绩", body, actions, animate)])
 }
 
 fn appearance_dialog(
@@ -1645,11 +1629,11 @@ fn appearance_dialog(
         )
     ]);
     let actions = vec![boxed_button(
-        "Done",
+        "完成",
         UiAction::CloseDialog,
         ButtonVariant::Primary,
     )];
-    Box::new(bsn_list![modal("Appearance", body, actions, animate)])
+    Box::new(bsn_list![modal("外观", body, actions, animate)])
 }
 
 fn theme_card(index: usize, label: &str, selected: bool, image: Handle<Image>) -> impl Scene {
@@ -1691,18 +1675,18 @@ fn theme_card(index: usize, label: &str, selected: bool, image: Handle<Image>) -
 
 fn shortcuts_dialog(animate: bool) -> Box<dyn SceneList> {
     let text = "\
-New Game                 Ctrl+N
-Restart                  Ctrl+R
-Pause / Resume           Pause
-Help                     F1
-Menu                     F10 / Ctrl+?
-Quit                     Ctrl+Q / Ctrl+W
+新游戏                 Ctrl+N
+重新开始               Ctrl+R
+暂停 / 继续            Pause
+帮助                   F1
+菜单                   F10 / Ctrl+?
+退出                   Ctrl+Q / Ctrl+W
 
-Small / Medium / Large   1 / 2 / 3
-Custom                   4
-Move                     Arrow keys or U J H K
-Reveal / Clear Around    Space
-Flag                     Ctrl+Space";
+小型 / 中型 / 大型     1 / 2 / 3
+自定义                 4
+移动                   方向键或 U J H K
+揭开 / 清除周围        空格
+插旗                   Ctrl+空格";
     let body = Box::new(bsn_list![
         (
             Text(text)
@@ -1711,41 +1695,36 @@ Flag                     Ctrl+Space";
         )
     ]);
     let actions = vec![boxed_button(
-        "Close",
+        "关闭",
         UiAction::CloseDialog,
         ButtonVariant::Primary,
     )];
-    Box::new(bsn_list![modal(
-        "Keyboard Shortcuts",
-        body,
-        actions,
-        animate
-    )])
+    Box::new(bsn_list![modal("键盘快捷键", body, actions, animate)])
 }
 
 const HELP_PAGES: [(&str, &str); 4] = [
     (
-        "Goal",
-        "Clear the minefield without detonating a mine. Numbers show how many mines touch a square.",
+        "目标",
+        "在不触雷的情况下清空雷区。格子中的数字表示相邻八格内的地雷数量。",
     ),
     (
-        "Clearing",
-        "Select a covered square to reveal it. Revealing an empty area automatically clears its connected neighbours.",
+        "揭开格子",
+        "选择未揭开的格子进行探索。揭开空白区域时，会自动清除与它相连的安全格子。",
     ),
     (
-        "Flags and Chording",
-        "Right-click or long-press to mark a suspected mine. Select a revealed number after placing the matching flags to clear around it.",
+        "插旗与快速清除",
+        "右键单击或长按可标记疑似地雷。当数字周围的旗帜数量与数字相同时，选择该数字即可清除周围格子。",
     ),
     (
-        "Controls",
-        "Use the mouse, touch, or keyboard. The first revealed square and all of its neighbours are always safe.",
+        "操作",
+        "可以使用鼠标、触摸或键盘操作。首次揭开的格子及其相邻格子始终安全。",
     ),
 ];
 
 fn help_dialog(snapshot: &UiSnapshot, animate: bool) -> Box<dyn SceneList> {
     let page = snapshot.help_page.min(HELP_PAGES.len() - 1);
     let (title, text) = HELP_PAGES[page];
-    let counter = format!("{} of {}", page + 1, HELP_PAGES.len());
+    let counter = format!("第 {} 页，共 {} 页", page + 1, HELP_PAGES.len());
     let body = Box::new(bsn_list![
         (
             Text(title)
@@ -1764,47 +1743,44 @@ fn help_dialog(snapshot: &UiSnapshot, animate: bool) -> Box<dyn SceneList> {
         )
     ]);
     let actions = vec![
-        boxed_button("Previous", UiAction::HelpPrevious, ButtonVariant::Normal),
-        boxed_button("Next", UiAction::HelpNext, ButtonVariant::Normal),
-        boxed_button("Close", UiAction::CloseDialog, ButtonVariant::Primary),
+        boxed_button("上一页", UiAction::HelpPrevious, ButtonVariant::Normal),
+        boxed_button("下一页", UiAction::HelpNext, ButtonVariant::Normal),
+        boxed_button("关闭", UiAction::CloseDialog, ButtonVariant::Primary),
     ];
-    Box::new(bsn_list![modal("Mines Help", body, actions, animate)])
+    Box::new(bsn_list![modal("扫雷帮助", body, actions, animate)])
 }
 
 fn about_dialog(animate: bool) -> Box<dyn SceneList> {
     let body = Box::new(bsn_list![
         (
-            Text("Mines 50.0")
+            Text("扫雷 50.0")
             TextFont { font_size: FontSize::Px(25.0) }
             TextColor(Color::srgb(0.16, 0.16, 0.18))
         ),
         (
-            Text("A faithful GNOME Mines recreation built with Bevy 0.19 native UI, BSN scenes, Feathers widgets, and App Settings.")
+            Text("使用 Bevy 0.19 原生 UI、BSN 场景、Feathers 控件和应用设置完整复刻 GNOME 扫雷。")
             TextFont { font_size: FontSize::Px(17.0) }
             TextColor(Color::srgb(0.24, 0.24, 0.26))
         ),
         (
-            Text("Artwork from GNOME Mines. Licensed GPL-3.0-or-later.")
+            Text("美术资源来自 GNOME Mines，采用 GPL-3.0-or-later 许可证。")
             TextFont { font_size: FontSize::Px(15.0) }
             TextColor(Color::srgb(0.40, 0.40, 0.42))
         )
     ]);
     let actions = vec![boxed_button(
-        "Close",
+        "关闭",
         UiAction::CloseDialog,
         ButtonVariant::Primary,
     )];
-    Box::new(bsn_list![modal("About Mines", body, actions, animate)])
+    Box::new(bsn_list![modal("关于扫雷", body, actions, animate)])
 }
 
 fn victory_dialog(snapshot: &UiSnapshot, animate: bool) -> Box<dyn SceneList> {
-    let time = format!(
-        "You cleared the minefield in {}.",
-        format_time(snapshot.elapsed)
-    );
+    let time = format!("你用 {} 清空了雷区。", format_time(snapshot.elapsed));
     let body = Box::new(bsn_list![
         (
-            Text("Well done!")
+            Text("干得漂亮！")
             TextFont { font_size: FontSize::Px(28.0) }
             TextColor(Color::srgb(0.12, 0.45, 0.20))
         ),
@@ -1816,17 +1792,17 @@ fn victory_dialog(snapshot: &UiSnapshot, animate: bool) -> Box<dyn SceneList> {
     ]);
     let actions = vec![
         boxed_button(
-            "New Game",
+            "新游戏",
             UiAction::Request(PendingAction::ShowNewGame),
             ButtonVariant::Normal,
         ),
         boxed_button(
-            "Play Again",
+            "再玩一次",
             UiAction::Request(PendingAction::Restart),
             ButtonVariant::Primary,
         ),
     ];
-    Box::new(bsn_list![modal("Victory", body, actions, animate)])
+    Box::new(bsn_list![modal("胜利", body, actions, animate)])
 }
 
 fn action_button(label: &str, action: UiAction, variant: ButtonVariant) -> impl Scene {
@@ -2019,6 +1995,12 @@ pub fn initialize_number_inputs(
             entity,
             value: NumberInputValue::I32(value),
         });
+    }
+}
+
+pub fn use_system_ui_font(mut fonts: Query<&mut TextFont, Added<TextFont>>) {
+    for mut font in &mut fonts {
+        font.font = FontSource::SystemUi;
     }
 }
 
@@ -2274,6 +2256,15 @@ pub fn window_focus_pause(
             app.auto_paused = false;
             app.set_paused(false, false);
         }
+    }
+}
+
+pub fn window_resize_layout(
+    mut resize_events: MessageReader<WindowResized>,
+    mut app: ResMut<MinesApp>,
+) {
+    if resize_events.read().next().is_some() {
+        app.layout_dirty = true;
     }
 }
 

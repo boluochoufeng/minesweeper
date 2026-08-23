@@ -4,7 +4,8 @@ This project recreates GNOME Mines 50.0 with Bevy 0.19 and Rust. It includes the
 standard and custom board sizes, first-click safety, question flags, chording,
 automatic clearing on flags, pausing, timing, persistent high scores, four
 upstream themes, keyboard/touch/mouse controls, help, and the original game
-credits.
+credits. The UI is localized in Simplified Chinese and uses Bevy's system-font
+fallback for Chinese glyph coverage.
 
 The interface uses Bevy 0.19's native UI stack rather than an external immediate
 mode GUI:

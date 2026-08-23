@@ -17,7 +17,8 @@ use ui::{
     MinesApp, NativeWindowState, animate_ui_transitions, apply_window_settings, close_and_save,
     feathers_plugins, initialize_number_inputs, keyboard_shortcuts, mines_theme,
     native_ui_observers, native_window_sync, rebuild_ui, schedule_settings_save, setup_assets,
-    startup_scene, sync_setting_widgets, update_clock_text, window_focus_pause,
+    startup_scene, sync_setting_widgets, update_clock_text, use_system_ui_font, window_focus_pause,
+    window_resize_layout,
 };
 
 fn main() {
@@ -32,7 +33,7 @@ fn main() {
         .insert_resource(ClearColor(Color::srgb(0.965, 0.961, 0.949)))
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
-                title: "Mines".to_owned(),
+                title: "扫雷".to_owned(),
                 name: Some("org.gnome.Mines".to_owned()),
                 resolution: WindowResolution::new(600, 600),
                 resizable: true,
@@ -64,7 +65,9 @@ fn main() {
                 window_focus_pause,
                 close_and_save,
                 native_window_sync,
+                window_resize_layout,
                 rebuild_ui,
+                use_system_ui_font,
                 animate_ui_transitions,
                 initialize_number_inputs,
                 sync_setting_widgets,

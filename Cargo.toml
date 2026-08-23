@@ -6,7 +6,7 @@ license = "GPL-3.0-or-later"
 description = "A Bevy recreation of GNOME Mines"
 
 [dependencies]
-bevy = { version = "0.19.0", features = ["bevy_feathers", "bevy_settings"] }
+bevy = { version = "0.19.0", features = ["bevy_feathers", "bevy_settings", "system_font_discovery"] }
 dirs = "6.0"
 rand = "0.9"
 resvg = { version = "0.45", default-features = false, features = ["system-fonts", "text"] }
