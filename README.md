@@ -1,13 +1,13 @@
 # Mines — Bevy recreation of GNOME Mines
 
-This project recreates GNOME Mines 50.0 with Bevy 0.19 and Rust. It includes the
+This project recreates GNOME Mines 50.0 with Bevy 0.20 and Rust. It includes the
 standard and custom board sizes, first-click safety, question flags, chording,
 automatic clearing on flags, pausing, timing, persistent high scores, four
 upstream themes, keyboard/touch/mouse controls, help, and the original game
 credits. The UI is localized in Simplified Chinese and uses Bevy's system-font
 fallback for Chinese glyph coverage.
 
-The interface uses Bevy 0.19's native UI stack rather than an external immediate
+The interface uses Bevy 0.20's native UI stack rather than an external immediate
 mode GUI:
 
 - `bsn!` and `bsn_list!` define the application shell and dynamic screens.
@@ -16,9 +16,10 @@ mode GUI:
 - `EditableText` powers the custom-board fields.
 - `SettingsPlugin` and `SettingsGroup` persist reflected settings as TOML.
 - Pointer observers handle left-click, right-click, and touch long-press.
-- Delayed Commands synchronize newly spawned number fields.
+- The 0.20 number-input component drives the custom-board fields.
 - A high-contrast eight-color palette distinguishes adjacent-mine counts.
 - `UiTransform` transitions animate screens, dialogs, pause state, and tile feedback.
+- The Feathers theme is expressed through 0.20's contextual semantic tokens.
 
 ## Run
 

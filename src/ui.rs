@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
-// Native Bevy 0.19 UI. The interface is built with BSN scenes and Feathers
+// Native Bevy 0.20 UI. The interface is built with BSN scenes and Feathers
 // scene components; the board rules remain in the engine-agnostic game module.
 
 use crate::game::{Board, GameClock, Mark, Outcome};
@@ -11,18 +11,18 @@ use bevy::{
     feathers::{
         FeathersPlugins,
         controls::{
-            ButtonVariant, FeathersButton, FeathersCheckbox, FeathersNumberInput, NumberFormat,
-            NumberInputValue, UpdateNumberInput,
+            ButtonVariant, FeathersButton, FeathersCheckbox, FeathersNumberInput, NumberInputValue,
         },
         dark_theme::create_dark_theme,
         theme::{ThemeBackgroundColor, ThemedText, UiTheme},
         tokens,
     },
     input_focus::InputFocus,
+    picking::events::{PointerClick, PointerPress, PointerRelease},
     prelude::*,
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
     settings::{SaveSettingsDeferred, SaveSettingsSync},
-    text::{EditableText, FontSource, TextEdit},
+    text::{EditableText, FontSource},
     ui::Checked,
     ui_widgets::{Activate, ValueChange, checkbox_self_update},
     window::{PrimaryWindow, WindowCloseRequested, WindowFocused, WindowResized},
@@ -573,39 +573,36 @@ impl DifficultyCard {
         let subtitle = props.subtitle;
         let action = props.action;
         bsn! {
-            @FeathersButton {
-                @caption: bsn! {
-                    Node {
-                        flex_direction: FlexDirection::Column,
-                        align_items: AlignItems::Center,
-                        justify_content: JustifyContent::Center,
-                        row_gap: px(8),
-                    }
-                    Children [
-                        (
-                            Text({title})
-                            TextFont { font_size: FontSize::Px(30.0) }
-                            TextColor(Color::srgb(0.16, 0.16, 0.18))
-                            ThemedText
-                        ),
-                        (
-                            Text({subtitle})
-                            TextFont { font_size: FontSize::Px(19.0) }
-                            TextColor(Color::srgb(0.20, 0.20, 0.22))
-                            ThemedText
-                        )
-                    ]
-                }
-            }
-            ActionTarget { action: {action} }
-            Node {
-                width: px(250),
-                height: px(150),
-                margin: px(7),
-                border_radius: BorderRadius::all(px(10)),
-            }
-            on(handle_action)
-        }
+
+
+                                    @FeathersButton {
+                                        @caption: bsn! {
+                                            Node {
+                                                flex_direction: FlexDirection::Column,
+                                                align_items: AlignItems::Center,
+                                                justify_content: JustifyContent::Center,
+                                                row_gap: px(8),
+                                            }
+                                            Children [ Text({title})
+                                                TextFont { font_size: FontSize::Px(30.0) }
+                                                TextColor(Color::srgb(0.16, 0.16, 0.18))
+                                                ThemedText -- Text({subtitle})
+                                                TextFont { font_size: FontSize::Px(19.0) }
+                                                TextColor(Color::srgb(0.20, 0.20, 0.22))
+                                                ThemedText ]
+                                        }
+                                    }
+                                    ActionTarget { action: {action} }
+                                    Node {
+                                        width: px(250),
+                                        height: px(150),
+                                        margin: px(7),
+                                        border_radius: BorderRadius::all(px(10)),
+                                    }
+                                    on(handle_action)
+
+
+                                }
     }
 }
 
@@ -639,58 +636,121 @@ pub fn native_ui_observers(app: &mut App) {
 }
 
 pub fn mines_theme() -> UiTheme {
-    let mut theme = UiTheme(create_dark_theme());
+    // 0.20 themes are two-stage: design tokens (e.g. `tokens::BUTTON_BG`) are assigned to
+    // semantic tokens (`tokens::semantic::FILL_SOLID_DEFAULT`), and the semantic layer holds
+    // the colors, optionally per `SurfaceLevel` context. Expressing the light GNOME palette at
+    // the semantic layer keeps it consistent for windows, panes, dialogs and floating menus.
+    let mut theme = create_dark_theme();
     let overrides = [
-        ("feathers.window.bg", Color::srgb(0.965, 0.961, 0.949)),
-        ("feathers.text.main", Color::srgb(0.12, 0.12, 0.13)),
-        ("feathers.text.dim", Color::srgb(0.36, 0.36, 0.38)),
-        ("feathers.button.bg", Color::srgb(0.88, 0.88, 0.88)),
-        ("feathers.button.bg.hover", Color::srgb(0.82, 0.82, 0.82)),
-        ("feathers.button.bg.pressed", Color::srgb(0.74, 0.74, 0.74)),
-        ("feathers.button.bg.disabled", Color::srgb(0.91, 0.91, 0.91)),
-        ("feathers.button.txt", Color::srgb(0.12, 0.12, 0.13)),
-        ("feathers.button.primary.bg", Color::srgb(0.21, 0.52, 0.89)),
         (
-            "feathers.button.primary.bg.hover",
-            Color::srgb(0.16, 0.45, 0.82),
+            tokens::semantic::SURFACE_WINDOW,
+            Color::srgb(0.965, 0.961, 0.949),
         ),
         (
-            "feathers.button.primary.bg.pressed",
-            Color::srgb(0.11, 0.37, 0.72),
-        ),
-        ("feathers.button.primary.txt", Color::WHITE),
-        ("feathers.button.plain.bg", Color::NONE),
-        (
-            "feathers.button.plain.bg.hover",
+            tokens::semantic::SURFACE_PANE_BODY,
             Color::srgb(0.88, 0.88, 0.88),
         ),
         (
-            "feathers.button.plain.bg.pressed",
+            tokens::semantic::SURFACE_PANE_HEADER,
+            Color::srgb(0.965, 0.961, 0.949),
+        ),
+        (
+            tokens::semantic::SURFACE_SUBPANE_BODY,
+            Color::srgb(0.88, 0.88, 0.88),
+        ),
+        (
+            tokens::semantic::SURFACE_SUBPANE_HEADER,
+            Color::srgb(0.90, 0.90, 0.90),
+        ),
+        (
+            tokens::semantic::SURFACE_GROUP,
+            Color::srgb(0.90, 0.90, 0.90),
+        ),
+        (
+            tokens::semantic::SURFACE_DIALOG,
+            Color::srgb(0.98, 0.98, 0.98),
+        ),
+        (
+            tokens::semantic::SURFACE_MENU,
+            Color::srgb(0.98, 0.98, 0.98),
+        ),
+        (
+            tokens::semantic::BORDER_DEFAULT,
+            Color::srgb(0.67, 0.67, 0.67),
+        ),
+        (
+            tokens::semantic::TEXT_DEFAULT,
+            Color::srgb(0.12, 0.12, 0.13),
+        ),
+        (tokens::semantic::TEXT_DIM, Color::srgb(0.36, 0.36, 0.38)),
+        (tokens::semantic::TEXT_ON_ACCENT, Color::WHITE),
+        (
+            tokens::semantic::TEXT_DISABLED,
+            Color::srgba(0.36, 0.36, 0.38, 0.45),
+        ),
+        (
+            tokens::semantic::FILL_ACCENT_DEFAULT,
+            Color::srgb(0.21, 0.52, 0.89),
+        ),
+        (
+            tokens::semantic::FILL_ACCENT_HOVER,
+            Color::srgb(0.16, 0.45, 0.82),
+        ),
+        (
+            tokens::semantic::FILL_ACCENT_PRESSED,
+            Color::srgb(0.11, 0.37, 0.72),
+        ),
+        (
+            tokens::semantic::FILL_ACCENT_DISABLED,
+            Color::srgba(0.74, 0.74, 0.74, 0.7),
+        ),
+        (
+            tokens::semantic::FILL_SOLID_DEFAULT,
+            Color::srgb(0.88, 0.88, 0.88),
+        ),
+        (
+            tokens::semantic::FILL_SOLID_HOVER,
+            Color::srgb(0.82, 0.82, 0.82),
+        ),
+        (
+            tokens::semantic::FILL_SOLID_DISABLED,
+            Color::srgba(0.91, 0.91, 0.91, 0.7),
+        ),
+        (tokens::semantic::FILL_ITEM_DEFAULT, Color::NONE),
+        (
+            tokens::semantic::FILL_ITEM_HOVER,
+            Color::srgb(0.88, 0.88, 0.88),
+        ),
+        (
+            tokens::semantic::FILL_ITEM_PRESSED,
             Color::srgb(0.80, 0.80, 0.80),
         ),
-        ("feathers.checkbox.text", Color::srgb(0.12, 0.12, 0.13)),
-        ("feathers.checkbox.bg", Color::WHITE),
-        ("feathers.checkbox.border", Color::srgb(0.55, 0.55, 0.57)),
+        (tokens::semantic::FILL_FIELD_DEFAULT, Color::WHITE),
         (
-            "feathers.checkbox.bg.checked",
-            Color::srgb(0.21, 0.52, 0.89),
+            tokens::semantic::FILL_FIELD_HOVER,
+            Color::srgb(0.97, 0.97, 0.97),
         ),
         (
-            "feathers.checkbox.border.checked",
-            Color::srgb(0.21, 0.52, 0.89),
+            tokens::semantic::FILL_FIELD_PRESSED,
+            Color::srgb(0.94, 0.94, 0.94),
         ),
-        ("feathers.textinput.bg", Color::WHITE),
-        ("feathers.textinput.text", Color::srgb(0.12, 0.12, 0.13)),
-        ("feathers.textinput.cursor", Color::srgb(0.12, 0.12, 0.13)),
     ];
     for (token, color) in overrides {
-        theme.set_color(token, color);
+        theme.semantic_base.insert(token.clone(), color);
+        // Contextual surfaces would otherwise fall back to the dark theme's tuned values.
+        for context_map in theme.semantic_overrides.values_mut() {
+            context_map.insert(token.clone(), color);
+        }
     }
-    theme
+    UiTheme(theme)
 }
 
 pub fn startup_scene() -> impl SceneList {
-    bsn_list![Camera2d]
+    bsn_list! {
+
+                    Camera2d
+
+                }
 }
 
 pub fn setup_assets(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
@@ -821,38 +881,36 @@ fn app_scene(snapshot: UiSnapshot, assets: ThemeAssets) -> impl Scene {
     let dialog = dialog_scene(&snapshot, &assets);
     let transition = UiTransition::screen(snapshot.screen_transition);
     bsn! {
-        UiRoot
-        Node {
-            width: percent(100),
-            height: percent(100),
-            flex_direction: FlexDirection::Column,
-            overflow: Overflow::clip(),
-        }
-        ThemeBackgroundColor(tokens::WINDOW_BG)
-        Children [
-            {header},
-            (
-                Node {
-                    width: percent(100),
-                    flex_grow: 1.0,
-                    min_height: px(0),
-                    padding: UiRect::all(px(20)),
-                    align_items: AlignItems::Center,
-                    justify_content: JustifyContent::Center,
+
+
+                    UiRoot
+                    Node {
+                        width: percent(100),
+                        height: percent(100),
+                        flex_direction: FlexDirection::Column,
+                        overflow: Overflow::clip(),
+                    }
+                    ThemeBackgroundColor(tokens::WINDOW_BG)
+                    Children [ {header} -- Node {
+                            width: percent(100),
+                            flex_grow: 1.0,
+                            min_height: px(0),
+                            padding: UiRect::all(px(20)),
+                            align_items: AlignItems::Center,
+                            justify_content: JustifyContent::Center,
+                        }
+                        UiTransition {
+                            elapsed: {transition.elapsed},
+                            delay: {transition.delay},
+                            duration: {transition.duration},
+                            from_scale: {transition.from_scale},
+                            from_y: {transition.from_y},
+                            easing: {transition.easing},
+                        }
+                        Children [ {content} ] -- {dialog} ]
+
+
                 }
-                UiTransition {
-                    elapsed: {transition.elapsed},
-                    delay: {transition.delay},
-                    duration: {transition.duration},
-                    from_scale: {transition.from_scale},
-                    from_y: {transition.from_y},
-                    easing: {transition.easing},
-                }
-                Children [{content}]
-            ),
-            {dialog}
-        ]
-    }
 }
 
 fn header_scene(snapshot: &UiSnapshot) -> Box<dyn SceneList> {
@@ -862,41 +920,31 @@ fn header_scene(snapshot: &UiSnapshot) -> Box<dyn SceneList> {
         ButtonVariant::Normal,
     );
     if snapshot.screen == Screen::NewGame {
-        return Box::new(bsn_list![
-            (
-                Node {
-                    width: percent(100),
-                    height: px(66),
-                    flex_shrink: 0.0,
-                    padding: UiRect::axes(px(18), px(10)),
-                    align_items: AlignItems::Center,
-                    justify_content: JustifyContent::SpaceBetween,
-                    border: UiRect::bottom(px(1)),
-                }
-                BackgroundColor(Color::srgb(0.99, 0.99, 0.99))
-                BorderColor::all(Color::srgb(0.74, 0.74, 0.74))
-                Children [
-                    (
-                        Node {
-                            min_width: px(190),
-                        }
-                        Pickable::IGNORE
-                    ),
-                    (
-                        Text("扫雷")
-                        TextFont { font_size: FontSize::Px(26.0) }
-                        TextColor(Color::srgb(0.12, 0.12, 0.13))
-                    ),
-                    (
-                        Node {
-                            min_width: px(190),
-                            justify_content: JustifyContent::End,
-                        }
-                        Children [{right}]
-                    )
-                ]
-            )
-        ]);
+        return Box::new(bsn_list! {
+
+                                    Node {
+                                        width: percent(100),
+                                        height: px(66),
+                                        flex_shrink: 0.0,
+                                        padding: UiRect::axes(px(18), px(10)),
+                                        align_items: AlignItems::Center,
+                                        justify_content: JustifyContent::SpaceBetween,
+                                        border: UiRect::bottom(px(1)),
+                                    }
+                                    BackgroundColor(Color::srgb(0.99, 0.99, 0.99))
+                                    BorderColor::all(Color::srgb(0.74, 0.74, 0.74))
+                                    Children [ Node {
+                                            min_width: px(190),
+                                        }
+                                        Pickable::IGNORE -- Text("扫雷")
+                                        TextFont { font_size: FontSize::Px(26.0) }
+                                        TextColor(Color::srgb(0.12, 0.12, 0.13)) -- Node {
+                                            min_width: px(190),
+                                            justify_content: JustifyContent::End,
+                                        }
+                                        Children [ {right} ] ]
+
+                                });
     }
 
     let mut left: Vec<Box<dyn SceneList>> = Vec::new();
@@ -923,50 +971,52 @@ fn header_scene(snapshot: &UiSnapshot) -> Box<dyn SceneList> {
             ));
         }
     }
-    Box::new(bsn_list![
-        (
-        Node {
-            width: percent(100),
-            height: px(66),
-            flex_shrink: 0.0,
-            padding: UiRect::axes(px(18), px(10)),
-            align_items: AlignItems::Center,
-            justify_content: JustifyContent::SpaceBetween,
-            border: UiRect::bottom(px(1)),
-        }
-        BackgroundColor(Color::srgb(0.99, 0.99, 0.99))
-        BorderColor::all(Color::srgb(0.74, 0.74, 0.74))
-        Children [
-            (
-                Node {
-                    min_width: px(190),
-                    column_gap: px(6),
-                    align_items: AlignItems::Center,
-                }
-                Children [{left}]
-            ),
-            (
-                Text("扫雷")
-                TextFont { font_size: FontSize::Px(26.0) }
-                TextColor(Color::srgb(0.12, 0.12, 0.13))
-            ),
-            (
-                Node {
-                    min_width: px(190),
-                    justify_content: JustifyContent::End,
-                }
-                Children [{right}]
-            )
-        ]
-        )
-    ])
+    Box::new(bsn_list! {
+
+                    Node {
+                        width: percent(100),
+                        height: px(66),
+                        flex_shrink: 0.0,
+                        padding: UiRect::axes(px(18), px(10)),
+                        align_items: AlignItems::Center,
+                        justify_content: JustifyContent::SpaceBetween,
+                        border: UiRect::bottom(px(1)),
+                    }
+                    BackgroundColor(Color::srgb(0.99, 0.99, 0.99))
+                    BorderColor::all(Color::srgb(0.74, 0.74, 0.74))
+                    Children [ Node {
+                            min_width: px(190),
+                            column_gap: px(6),
+                            align_items: AlignItems::Center,
+                        }
+                        Children [ {left} ] -- Text("扫雷")
+                        TextFont { font_size: FontSize::Px(26.0) }
+                        TextColor(Color::srgb(0.12, 0.12, 0.13)) -- Node {
+                            min_width: px(190),
+                            justify_content: JustifyContent::End,
+                        }
+                        Children [ {right} ] ]
+
+                })
 }
 
 fn screen_scene(snapshot: &UiSnapshot, assets: &ThemeAssets) -> Box<dyn SceneList> {
     match snapshot.screen {
-        Screen::NewGame => Box::new(bsn_list![new_game_scene()]),
-        Screen::Custom => Box::new(bsn_list![custom_scene(snapshot)]),
-        Screen::Game => Box::new(bsn_list![game_scene(snapshot, assets)]),
+        Screen::NewGame => Box::new(bsn_list! {
+
+                                    @new_game_scene()
+
+                                }),
+        Screen::Custom => Box::new(bsn_list! {
+
+                                    @custom_scene(snapshot)
+
+                                }),
+        Screen::Game => Box::new(bsn_list! {
+
+                                    @game_scene(snapshot, assets)
+
+                                }),
     }
 }
 
@@ -990,42 +1040,43 @@ fn new_game_scene() -> impl Scene {
         difficulty_card("?", "自定义", UiAction::ShowCustom),
     ];
     bsn! {
-        Node {
-            width: percent(100),
-            max_width: px(620),
-            flex_direction: FlexDirection::Column,
-            align_items: AlignItems::Center,
-            row_gap: px(26),
-        }
-        Children [
-            (
-                Text("选择难度")
-                TextFont { font_size: FontSize::Px(36.0) }
-                TextColor(Color::srgb(0.32, 0.32, 0.34))
-            ),
-            (
-                Node {
-                    width: percent(100),
-                    flex_wrap: FlexWrap::Wrap,
-                    align_items: AlignItems::Center,
-                    justify_content: JustifyContent::Center,
+
+
+                    Node {
+                        width: percent(100),
+                        max_width: px(620),
+                        flex_direction: FlexDirection::Column,
+                        align_items: AlignItems::Center,
+                        row_gap: px(26),
+                    }
+                    Children [ Text("选择难度")
+                        TextFont { font_size: FontSize::Px(36.0) }
+                        TextColor(Color::srgb(0.32, 0.32, 0.34)) -- Node {
+                            width: percent(100),
+                            flex_wrap: FlexWrap::Wrap,
+                            align_items: AlignItems::Center,
+                            justify_content: JustifyContent::Center,
+                        }
+                        Children [ {cards} ] ]
+
+
                 }
-                Children [{cards}]
-            )
-        ]
-    }
 }
 
 fn difficulty_card(title: &str, subtitle: &str, action: UiAction) -> impl Scene {
     let title = title.to_owned();
     let subtitle = subtitle.to_owned();
     bsn! {
-        @DifficultyCard {
-            @title: {title},
-            @subtitle: {subtitle},
-            @action: {action},
-        }
-    }
+
+
+                    @DifficultyCard {
+                        @title: {title},
+                        @subtitle: {subtitle},
+                        @action: {action},
+                    }
+
+
+                }
 }
 
 fn custom_scene(snapshot: &UiSnapshot) -> impl Scene {
@@ -1034,72 +1085,67 @@ fn custom_scene(snapshot: &UiSnapshot) -> impl Scene {
         / (settings.custom_width * settings.custom_height) as f64)
         .round() as i32;
     let inputs = vec![
-        number_input("宽度", CustomField::Width),
-        number_input("高度", CustomField::Height),
-        number_input("雷区占比（%）", CustomField::Percentage),
+        number_input("宽度", CustomField::Width, settings.custom_width as i32),
+        number_input("高度", CustomField::Height, settings.custom_height as i32),
+        number_input("雷区占比（%）", CustomField::Percentage, percentage),
     ];
     let summary = format!(
         "{} × {}，{} 个雷（{}%）",
         settings.custom_width, settings.custom_height, settings.custom_mines, percentage
     );
-    let start = bsn_list![action_button(
-        "开始游戏",
-        UiAction::Request(PendingAction::Start(Difficulty::Custom)),
-        ButtonVariant::Primary,
-    )];
+    let start = bsn_list! {
+
+                    @action_button(
+                        "开始游戏",
+                        UiAction::Request(PendingAction::Start(Difficulty::Custom)),
+                        ButtonVariant::Primary,
+                    )
+
+                };
     bsn! {
-        Node {
-            width: percent(100),
-            max_width: px(520),
-            flex_direction: FlexDirection::Column,
-            align_items: AlignItems::Stretch,
-            row_gap: px(18),
-            padding: px(24),
-        }
-        Children [
-            (
-                Text("自定义游戏")
-                TextFont { font_size: FontSize::Px(34.0) }
-                TextColor(Color::srgb(0.22, 0.22, 0.24))
-            ),
-            {inputs},
-            (
-                Text({summary})
-                TextFont { font_size: FontSize::Px(17.0) }
-                TextColor(Color::srgb(0.36, 0.36, 0.38))
-            ),
-            {start}
-        ]
-    }
+
+
+                    Node {
+                        width: percent(100),
+                        max_width: px(520),
+                        flex_direction: FlexDirection::Column,
+                        align_items: AlignItems::Stretch,
+                        row_gap: px(18),
+                        padding: px(24),
+                    }
+                    Children [ Text("自定义游戏")
+                        TextFont { font_size: FontSize::Px(34.0) }
+                        TextColor(Color::srgb(0.22, 0.22, 0.24)) -- {inputs} -- Text({summary})
+                        TextFont { font_size: FontSize::Px(17.0) }
+                        TextColor(Color::srgb(0.36, 0.36, 0.38)) -- {start} ]
+
+
+                }
 }
 
-fn number_input(label: &str, field: CustomField) -> impl Scene {
+fn number_input(label: &str, field: CustomField, value: i32) -> impl Scene {
     let label = label.to_owned();
     bsn! {
-        Node {
-            width: percent(100),
-            align_items: AlignItems::Center,
-            justify_content: JustifyContent::SpaceBetween,
-            column_gap: px(16),
-        }
-        Children [
-            (
-                Text({label})
-                TextFont { font_size: FontSize::Px(19.0) }
-                TextColor(Color::srgb(0.18, 0.18, 0.20))
-            ),
-            (
-                @FeathersNumberInput {
-                    @number_format: NumberFormat::I32,
+
+
+                    Node {
+                        width: percent(100),
+                        align_items: AlignItems::Center,
+                        justify_content: JustifyContent::SpaceBetween,
+                        column_gap: px(16),
+                    }
+                    Children [ Text({label})
+                        TextFont { font_size: FontSize::Px(19.0) }
+                        TextColor(Color::srgb(0.18, 0.18, 0.20)) -- @FeathersNumberInput
+                        NumberInputValue::I32({value})
+                        CustomInput { field: {field} }
+                        Node {
+                            width: px(170),
+                        }
+                        on(custom_value_changed) ]
+
+
                 }
-                CustomInput { field: {field} }
-                Node {
-                    width: px(170),
-                }
-                on(custom_value_changed)
-            )
-        ]
-    }
 }
 
 fn game_scene(snapshot: &UiSnapshot, assets: &ThemeAssets) -> impl Scene {
@@ -1122,89 +1168,87 @@ fn game_scene(snapshot: &UiSnapshot, assets: &ThemeAssets) -> impl Scene {
         / snapshot.scale_factor;
     let board_width = cell_size * board.width as f32;
     let board_height = cell_size * board.height as f32;
-    let status = bsn_list![status_scene(snapshot, assets)];
+    let status = bsn_list! {
+
+                    @status_scene(snapshot, assets)
+
+                };
     let pause_transition = UiTransition::pause();
     let pause_overlay: Box<dyn SceneList> = if snapshot.paused {
-        Box::new(bsn_list![
-            (
-                Node {
-                    position_type: PositionType::Absolute,
-                    left: percent(0),
-                    top: percent(0),
-                    width: percent(100),
-                    height: percent(100),
-                    align_items: AlignItems::Center,
-                    justify_content: JustifyContent::Center,
-                }
-                ZIndex(20)
-                BackgroundColor(Color::srgba(0.96, 0.96, 0.96, 0.86))
-                Children [(
-                    Text("已暂停")
-                    TextFont { font_size: FontSize::Px(44.0) }
-                    TextColor(Color::srgb(0.18, 0.18, 0.20))
-                    UiTransition {
-                        elapsed: {pause_transition.elapsed},
-                        delay: {pause_transition.delay},
-                        duration: {pause_transition.duration},
-                        from_scale: {pause_transition.from_scale},
-                        from_y: {pause_transition.from_y},
-                        easing: {pause_transition.easing},
-                    }
-                )]
-            )
-        ])
+        Box::new(bsn_list! {
+
+                                    Node {
+                                        position_type: PositionType::Absolute,
+                                        left: percent(0),
+                                        top: percent(0),
+                                        width: percent(100),
+                                        height: percent(100),
+                                        align_items: AlignItems::Center,
+                                        justify_content: JustifyContent::Center,
+                                    }
+                                    ZIndex(20)
+                                    BackgroundColor(Color::srgba(0.96, 0.96, 0.96, 0.86))
+                                    Children [ Text("已暂停")
+                                        TextFont { font_size: FontSize::Px(44.0) }
+                                        TextColor(Color::srgb(0.18, 0.18, 0.20))
+                                        UiTransition {
+                                            elapsed: {pause_transition.elapsed},
+                                            delay: {pause_transition.delay},
+                                            duration: {pause_transition.duration},
+                                            from_scale: {pause_transition.from_scale},
+                                            from_y: {pause_transition.from_y},
+                                            easing: {pause_transition.easing},
+                                    } ]
+
+                                })
     } else {
-        Box::new(bsn_list![])
+        Box::new(bsn_list! {
+
+                                })
     };
 
     bsn! {
-        Node {
-            width: percent(100),
-            height: percent(100),
-            flex_direction: FlexDirection::Column,
-            align_items: AlignItems::Center,
-            justify_content: JustifyContent::Center,
-            row_gap: px(12),
-            min_height: px(0),
-        }
-        Children [
-            (
-                Node {
-                    position_type: PositionType::Relative,
-                    width: percent(100),
-                    flex_grow: 1.0,
-                    min_height: px(0),
-                    align_items: AlignItems::Center,
-                    justify_content: JustifyContent::Center,
-                }
-                Children [
-                    (
-                        Node {
-                            display: Display::Grid,
-                            width: {px(board_width)},
-                            height: {px(board_height)},
-                            grid_template_columns:
-                                {RepeatedGridTrack::px::<Vec<RepeatedGridTrack>>(
-                                    board.width as u16,
-                                    cell_size,
-                                )},
-                            grid_template_rows:
-                                {RepeatedGridTrack::px::<Vec<RepeatedGridTrack>>(
-                                    board.height as u16,
-                                    cell_size,
-                                )},
-                            column_gap: px(0),
-                            row_gap: px(0),
+
+
+                    Node {
+                        width: percent(100),
+                        height: percent(100),
+                        flex_direction: FlexDirection::Column,
+                        align_items: AlignItems::Center,
+                        justify_content: JustifyContent::Center,
+                        row_gap: px(12),
+                        min_height: px(0),
+                    }
+                    Children [ Node {
+                            position_type: PositionType::Relative,
+                            width: percent(100),
+                            flex_grow: 1.0,
+                            min_height: px(0),
+                            align_items: AlignItems::Center,
+                            justify_content: JustifyContent::Center,
                         }
-                        BackgroundColor(Color::srgb(0.72, 0.72, 0.72))
-                        Children [{cells}]
-                    ),
-                    {pause_overlay}
-                ]
-            ),
-            {status}
-        ]
-    }
+                        Children [ Node {
+                                display: Display::Grid,
+                                width: {px(board_width)},
+                                height: {px(board_height)},
+                                grid_template_columns:
+                                {RepeatedGridTrack::px::<Vec<RepeatedGridTrack>>(
+                                        board.width as u16,
+                                        cell_size,
+                                )},
+                                grid_template_rows:
+                                {RepeatedGridTrack::px::<Vec<RepeatedGridTrack>>(
+                                        board.height as u16,
+                                        cell_size,
+                                )},
+                                column_gap: px(0),
+                                row_gap: px(0),
+                            }
+                            BackgroundColor(Color::srgb(0.72, 0.72, 0.72))
+                            Children [ {cells} ] -- {pause_overlay} ] -- {status} ]
+
+
+                }
 }
 
 fn cell_scene(snapshot: &UiSnapshot, index: usize, textures: &[Handle<Image>]) -> impl Scene {
@@ -1231,57 +1275,63 @@ fn cell_scene(snapshot: &UiSnapshot, index: usize, textures: &[Handle<Image>]) -
         let number = cell.adjacent.to_string();
         let color = number_color(cell.adjacent);
         let font_size = FontSize::VMin(60.0 / board.width.max(board.height).max(1) as f32);
-        Box::new(bsn_list![
-            (
-                Text({number})
-                TextFont { font_size: {font_size} }
-                TextColor({color})
-                Pickable::IGNORE
-            )
-        ])
+        Box::new(bsn_list! {
+
+                                    Text({number})
+                                    TextFont { font_size: {font_size} }
+                                    TextColor({color})
+                                    Pickable::IGNORE
+
+                                })
     } else {
         tile_graphic(board, index).map_or_else(
-            || Box::new(bsn_list![]) as Box<dyn SceneList>,
+            || Box::new(bsn_list! {
+
+                                                }) as Box<dyn SceneList>,
             |graphic| {
                 let handle = textures[graphic].clone();
-                Box::new(bsn_list![
-                    (
-                        ImageNode { image: {handle} }
-                        Node {
-                            width: percent(100),
-                            height: percent(100),
-                        }
-                        Pickable::IGNORE
-                    )
-                ]) as Box<dyn SceneList>
+                Box::new(bsn_list! {
+
+                                                                    ImageNode { image: {handle} }
+                                                                    Node {
+                                                                        width: percent(100),
+                                                                        height: percent(100),
+                                                                    }
+                                                                    Pickable::IGNORE
+
+                                                                }) as Box<dyn SceneList>
             },
         )
     };
 
     bsn! {
-        CellTarget { index }
-        Node {
-            width: percent(100),
-            height: percent(100),
-            min_width: px(0),
-            min_height: px(0),
-            border: {px(if selected { 2.5 } else { 0.75 })},
-            align_items: AlignItems::Center,
-            justify_content: JustifyContent::Center,
-            overflow: Overflow::clip(),
-        }
-        BackgroundColor({background})
-        BorderColor::all(border_color)
-        UiTransition {
-            elapsed: {transition.elapsed},
-            delay: {transition.delay},
-            duration: {transition.duration},
-            from_scale: {transition.from_scale},
-            from_y: {transition.from_y},
-            easing: {transition.easing},
-        }
-        Children [{visual}]
-    }
+
+
+                    CellTarget { index }
+                    Node {
+                        width: percent(100),
+                        height: percent(100),
+                        min_width: px(0),
+                        min_height: px(0),
+                        border: {px(if selected { 2.5 } else { 0.75 })},
+                        align_items: AlignItems::Center,
+                        justify_content: JustifyContent::Center,
+                        overflow: Overflow::clip(),
+                    }
+                    BackgroundColor({background})
+                    BorderColor::all(border_color)
+                    UiTransition {
+                        elapsed: {transition.elapsed},
+                        delay: {transition.delay},
+                        duration: {transition.duration},
+                        from_scale: {transition.from_scale},
+                        from_y: {transition.from_y},
+                        easing: {transition.easing},
+                    }
+                    Children [ {visual} ]
+
+
+                }
 }
 
 fn number_color(number: u8) -> Color {
@@ -1330,58 +1380,43 @@ fn status_scene(snapshot: &UiSnapshot, assets: &ThemeAssets) -> impl Scene {
     let flag = assets.flag.clone();
     let stopwatch = assets.stopwatch.clone();
     bsn! {
-        Node {
-            height: px(52),
-            padding: UiRect::axes(px(18), px(8)),
-            column_gap: px(34),
-            align_items: AlignItems::Center,
-            justify_content: JustifyContent::Center,
-            border_radius: BorderRadius::all(px(10)),
-        }
-        BackgroundColor(Color::srgb(0.91, 0.91, 0.90))
-        Children [
-            (
-                Node {
-                    align_items: AlignItems::Center,
-                    column_gap: px(8),
+
+
+                    Node {
+                        height: px(52),
+                        padding: UiRect::axes(px(18), px(8)),
+                        column_gap: px(34),
+                        align_items: AlignItems::Center,
+                        justify_content: JustifyContent::Center,
+                        border_radius: BorderRadius::all(px(10)),
+                    }
+                    BackgroundColor(Color::srgb(0.91, 0.91, 0.90))
+                    Children [ Node {
+                            align_items: AlignItems::Center,
+                            column_gap: px(8),
+                        }
+                        Children [ ImageNode { image: {flag} }
+                            Node { width: px(25), height: px(25) } -- Text({flags})
+                            TextFont { font_size: FontSize::Px(20.0) }
+                            TextColor(Color::srgb(0.12, 0.12, 0.13)) ] -- Node {
+                            align_items: AlignItems::Center,
+                            column_gap: px(8),
+                        }
+                        Children [ ImageNode { image: {stopwatch} }
+                            Node { width: px(25), height: px(25) } -- ClockText
+                            Text({elapsed})
+                            TextFont { font_size: FontSize::Px(20.0) }
+                            TextColor(Color::srgb(0.12, 0.12, 0.13)) ] ]
+
+
                 }
-                Children [
-                    (
-                        ImageNode { image: {flag} }
-                        Node { width: px(25), height: px(25) }
-                    ),
-                    (
-                        Text({flags})
-                        TextFont { font_size: FontSize::Px(20.0) }
-                        TextColor(Color::srgb(0.12, 0.12, 0.13))
-                    )
-                ]
-            ),
-            (
-                Node {
-                    align_items: AlignItems::Center,
-                    column_gap: px(8),
-                }
-                Children [
-                    (
-                        ImageNode { image: {stopwatch} }
-                        Node { width: px(25), height: px(25) }
-                    ),
-                    (
-                        ClockText
-                        Text({elapsed})
-                        TextFont { font_size: FontSize::Px(20.0) }
-                        TextColor(Color::srgb(0.12, 0.12, 0.13))
-                    )
-                ]
-            )
-        ]
-    }
 }
 
 fn dialog_scene(snapshot: &UiSnapshot, assets: &ThemeAssets) -> Box<dyn SceneList> {
     let Some(dialog) = snapshot.dialog else {
-        return Box::new(bsn_list![]);
+        return Box::new(bsn_list! {
+
+                                });
     };
     let animate = snapshot.dialog_transition;
     match dialog {
@@ -1405,68 +1440,60 @@ fn modal(
     let title = title.to_owned();
     let transition = UiTransition::dialog(animate);
     bsn! {
-        Node {
-            position_type: PositionType::Absolute,
-            left: percent(0),
-            top: percent(0),
-            width: percent(100),
-            height: percent(100),
-            padding: px(24),
-            align_items: AlignItems::Center,
-            justify_content: JustifyContent::Center,
-        }
-        ZIndex(100)
-        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.45))
-        Children [(
-            Node {
-                width: percent(100),
-                max_width: px(620),
-                max_height: percent(92),
-                flex_direction: FlexDirection::Column,
-                row_gap: px(18),
-                padding: px(24),
-                border: px(1),
-                border_radius: BorderRadius::all(px(12)),
-                overflow: Overflow::clip(),
-            }
-            BackgroundColor(Color::srgb(0.98, 0.98, 0.98))
-            BorderColor::all(Color::srgb(0.67, 0.67, 0.67))
-            UiTransition {
-                elapsed: {transition.elapsed},
-                delay: {transition.delay},
-                duration: {transition.duration},
-                from_scale: {transition.from_scale},
-                from_y: {transition.from_y},
-                easing: {transition.easing},
-            }
-            Children [
-                (
-                    Text({title})
-                    TextFont { font_size: FontSize::Px(30.0) }
-                    TextColor(Color::srgb(0.16, 0.16, 0.18))
-                ),
-                (
+
+
                     Node {
+                        position_type: PositionType::Absolute,
+                        left: percent(0),
+                        top: percent(0),
                         width: percent(100),
-                        flex_direction: FlexDirection::Column,
-                        row_gap: px(10),
-                        overflow: Overflow::clip_y(),
-                    }
-                    Children [{body}]
-                ),
-                (
-                    Node {
-                        width: percent(100),
-                        justify_content: JustifyContent::End,
+                        height: percent(100),
+                        padding: px(24),
                         align_items: AlignItems::Center,
-                        column_gap: px(10),
-                        flex_wrap: FlexWrap::Wrap,
+                        justify_content: JustifyContent::Center,
                     }
-                    Children [{actions}]
-                )
-            ]
-        )]
-    }
+                    ZIndex(100)
+                    BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.45))
+                    Children [ Node {
+                            width: percent(100),
+                            max_width: px(620),
+                            max_height: percent(92),
+                            flex_direction: FlexDirection::Column,
+                            row_gap: px(18),
+                            padding: px(24),
+                            border: px(1),
+                            border_radius: BorderRadius::all(px(12)),
+                            overflow: Overflow::clip(),
+                        }
+                        BackgroundColor(Color::srgb(0.98, 0.98, 0.98))
+                        BorderColor::all(Color::srgb(0.67, 0.67, 0.67))
+                        UiTransition {
+                            elapsed: {transition.elapsed},
+                            delay: {transition.delay},
+                            duration: {transition.duration},
+                            from_scale: {transition.from_scale},
+                            from_y: {transition.from_y},
+                            easing: {transition.easing},
+                        }
+                        Children [ Text({title})
+                            TextFont { font_size: FontSize::Px(30.0) }
+                            TextColor(Color::srgb(0.16, 0.16, 0.18)) -- Node {
+                                width: percent(100),
+                                flex_direction: FlexDirection::Column,
+                                row_gap: px(10),
+                                overflow: Overflow::clip_y(),
+                            }
+                            Children [ {body} ] -- Node {
+                                width: percent(100),
+                                justify_content: JustifyContent::End,
+                                align_items: AlignItems::Center,
+                                column_gap: px(10),
+                                flex_wrap: FlexWrap::Wrap,
+                            }
+                            Children [ {actions} ] ] ]
+
+
+                }
 }
 
 fn menu_dialog(snapshot: &UiSnapshot, animate: bool) -> Box<dyn SceneList> {
@@ -1502,64 +1529,74 @@ fn menu_dialog(snapshot: &UiSnapshot, animate: bool) -> Box<dyn SceneList> {
         ),
     ];
     let version = format!(
-        "Bevy 0.19 原生界面 · {}主题",
+        "Bevy 0.20 原生界面 · {}主题",
         THEMES[theme_index(&snapshot.settings.theme)].1
     );
-    let body = Box::new(bsn_list![
-        (
-            Node {
-                width: percent(100),
-                flex_direction: FlexDirection::Column,
-                row_gap: px(10),
-            }
-            Children [{toggles}]
-        ),
-        (
-            Node {
-                width: percent(100),
-                flex_direction: FlexDirection::Column,
-                row_gap: px(8),
-            }
-            Children [{items}]
-        ),
-        (
-            Text({version})
-            TextFont { font_size: FontSize::Px(14.0) }
-            TextColor(Color::srgb(0.42, 0.42, 0.44))
-        )
-    ]);
+    let body = Box::new(bsn_list! {
+
+                    Node {
+                        width: percent(100),
+                        flex_direction: FlexDirection::Column,
+                        row_gap: px(10),
+                    }
+                    Children [ {toggles} ]
+                    --
+                    Node {
+                        width: percent(100),
+                        flex_direction: FlexDirection::Column,
+                        row_gap: px(8),
+                    }
+                    Children [ {items} ]
+                    --
+                    Text({version})
+                    TextFont { font_size: FontSize::Px(14.0) }
+                    TextColor(Color::srgb(0.42, 0.42, 0.44))
+
+                });
     let actions = vec![
         boxed_button("退出", UiAction::Quit, ButtonVariant::Plain),
         boxed_button("关闭", UiAction::CloseDialog, ButtonVariant::Primary),
     ];
-    Box::new(bsn_list![modal("菜单", body, actions, animate)])
+    Box::new(bsn_list! {
+
+                    @modal("菜单", body, actions, animate)
+
+                })
 }
 
 fn setting_checkbox(label: &str, key: SettingKey) -> impl Scene {
     let label = label.to_owned();
     bsn! {
-        @FeathersCheckbox {
-            @caption: bsn! { Text({label}) ThemedText }
-        }
-        SettingTarget { key: {key} }
-        on(checkbox_self_update)
-        on(setting_changed)
-    }
+
+
+                    @FeathersCheckbox {
+                        @caption: bsn! { Text({label}) ThemedText }
+                    }
+                    SettingTarget { key: {key} }
+                    on(checkbox_self_update)
+                    on(setting_changed)
+
+
+                }
 }
 
 fn confirm_dialog(animate: bool) -> Box<dyn SceneList> {
-    let body = Box::new(bsn_list![
-        (
-            Text("当前游戏进度将会丢失。")
-            TextFont { font_size: FontSize::Px(19.0) }
-            TextColor(Color::srgb(0.22, 0.22, 0.24))
-        )
-    ]);
+    let body = Box::new(bsn_list! {
+
+                    Text("当前游戏进度将会丢失。")
+                    TextFont { font_size: FontSize::Px(19.0) }
+                    TextColor(Color::srgb(0.22, 0.22, 0.24))
+
+                });
     let actions = vec![
         boxed_button("取消", UiAction::ConfirmCancel, ButtonVariant::Normal),
         boxed_button("离开游戏", UiAction::ConfirmAccept, ButtonVariant::Primary),
     ];
-    Box::new(bsn_list![modal("开始新游戏？", body, actions, animate)])
+    Box::new(bsn_list! {
+
+                    @modal("开始新游戏？", body, actions, animate)
+
+                })
 }
 
 fn scores_dialog(snapshot: &UiSnapshot, animate: bool) -> Box<dyn SceneList> {
@@ -1586,19 +1623,23 @@ fn scores_dialog(snapshot: &UiSnapshot, animate: bool) -> Box<dyn SceneList> {
             text.push('\n');
         }
     }
-    let body = Box::new(bsn_list![
-        (
-            Text({text})
-            TextFont { font_size: FontSize::Px(17.0) }
-            TextColor(Color::srgb(0.18, 0.18, 0.20))
-        )
-    ]);
+    let body = Box::new(bsn_list! {
+
+                    Text({text})
+                    TextFont { font_size: FontSize::Px(17.0) }
+                    TextColor(Color::srgb(0.18, 0.18, 0.20))
+
+                });
     let actions = vec![boxed_button(
         "关闭",
         UiAction::CloseDialog,
         ButtonVariant::Primary,
     )];
-    Box::new(bsn_list![modal("成绩", body, actions, animate)])
+    Box::new(bsn_list! {
+
+                    @modal("成绩", body, actions, animate)
+
+                })
 }
 
 fn appearance_dialog(
@@ -1618,22 +1659,26 @@ fn appearance_dialog(
             )
         })
         .collect();
-    let body = Box::new(bsn_list![
-        (
-            Node {
-                width: percent(100),
-                flex_wrap: FlexWrap::Wrap,
-                justify_content: JustifyContent::Center,
-            }
-            Children [{cards}]
-        )
-    ]);
+    let body = Box::new(bsn_list! {
+
+                    Node {
+                        width: percent(100),
+                        flex_wrap: FlexWrap::Wrap,
+                        justify_content: JustifyContent::Center,
+                    }
+                    Children [ {cards} ]
+
+                });
     let actions = vec![boxed_button(
         "完成",
         UiAction::CloseDialog,
         ButtonVariant::Primary,
     )];
-    Box::new(bsn_list![modal("外观", body, actions, animate)])
+    Box::new(bsn_list! {
+
+                    @modal("外观", body, actions, animate)
+
+                })
 }
 
 fn theme_card(index: usize, label: &str, selected: bool, image: Handle<Image>) -> impl Scene {
@@ -1643,34 +1688,31 @@ fn theme_card(index: usize, label: &str, selected: bool, image: Handle<Image>) -
         label.to_owned()
     };
     bsn! {
-        @FeathersButton {
-            @caption: bsn! {
-                Node {
-                    flex_direction: FlexDirection::Column,
-                    align_items: AlignItems::Center,
-                    row_gap: px(7),
+
+
+                    @FeathersButton {
+                        @caption: bsn! {
+                            Node {
+                                flex_direction: FlexDirection::Column,
+                                align_items: AlignItems::Center,
+                                row_gap: px(7),
+                            }
+                            Children [ ImageNode { image: {image} }
+                                Node { width: px(68), height: px(68) } -- Text({label})
+                                TextFont { font_size: FontSize::Px(16.0) }
+                                ThemedText ]
+                        }
+                    }
+                    ActionTarget { action: UiAction::Theme(index) }
+                    Node {
+                        width: px(135),
+                        height: px(120),
+                        margin: px(5),
+                    }
+                    on(handle_action)
+
+
                 }
-                Children [
-                    (
-                        ImageNode { image: {image} }
-                        Node { width: px(68), height: px(68) }
-                    ),
-                    (
-                        Text({label})
-                        TextFont { font_size: FontSize::Px(16.0) }
-                        ThemedText
-                    )
-                ]
-            }
-        }
-        ActionTarget { action: UiAction::Theme(index) }
-        Node {
-            width: px(135),
-            height: px(120),
-            margin: px(5),
-        }
-        on(handle_action)
-    }
 }
 
 fn shortcuts_dialog(animate: bool) -> Box<dyn SceneList> {
@@ -1687,19 +1729,23 @@ fn shortcuts_dialog(animate: bool) -> Box<dyn SceneList> {
 移动                   方向键或 U J H K
 揭开 / 清除周围        空格
 插旗                   Ctrl+空格";
-    let body = Box::new(bsn_list![
-        (
-            Text(text)
-            TextFont { font_size: FontSize::Px(17.0) }
-            TextColor(Color::srgb(0.18, 0.18, 0.20))
-        )
-    ]);
+    let body = Box::new(bsn_list! {
+
+                    Text(text)
+                    TextFont { font_size: FontSize::Px(17.0) }
+                    TextColor(Color::srgb(0.18, 0.18, 0.20))
+
+                });
     let actions = vec![boxed_button(
         "关闭",
         UiAction::CloseDialog,
         ButtonVariant::Primary,
     )];
-    Box::new(bsn_list![modal("键盘快捷键", body, actions, animate)])
+    Box::new(bsn_list! {
+
+                    @modal("键盘快捷键", body, actions, animate)
+
+                })
 }
 
 const HELP_PAGES: [(&str, &str); 4] = [
@@ -1725,71 +1771,74 @@ fn help_dialog(snapshot: &UiSnapshot, animate: bool) -> Box<dyn SceneList> {
     let page = snapshot.help_page.min(HELP_PAGES.len() - 1);
     let (title, text) = HELP_PAGES[page];
     let counter = format!("第 {} 页，共 {} 页", page + 1, HELP_PAGES.len());
-    let body = Box::new(bsn_list![
-        (
-            Text(title)
-            TextFont { font_size: FontSize::Px(23.0) }
-            TextColor(Color::srgb(0.16, 0.16, 0.18))
-        ),
-        (
-            Text(text)
-            TextFont { font_size: FontSize::Px(18.0) }
-            TextColor(Color::srgb(0.24, 0.24, 0.26))
-        ),
-        (
-            Text({counter})
-            TextFont { font_size: FontSize::Px(14.0) }
-            TextColor(Color::srgb(0.43, 0.43, 0.45))
-        )
-    ]);
+    let body = Box::new(bsn_list! {
+
+                    Text(title)
+                    TextFont { font_size: FontSize::Px(23.0) }
+                    TextColor(Color::srgb(0.16, 0.16, 0.18))
+                    --
+                    Text(text)
+                    TextFont { font_size: FontSize::Px(18.0) }
+                    TextColor(Color::srgb(0.24, 0.24, 0.26))
+                    --
+                    Text({counter})
+                    TextFont { font_size: FontSize::Px(14.0) }
+                    TextColor(Color::srgb(0.43, 0.43, 0.45))
+
+                });
     let actions = vec![
         boxed_button("上一页", UiAction::HelpPrevious, ButtonVariant::Normal),
         boxed_button("下一页", UiAction::HelpNext, ButtonVariant::Normal),
         boxed_button("关闭", UiAction::CloseDialog, ButtonVariant::Primary),
     ];
-    Box::new(bsn_list![modal("扫雷帮助", body, actions, animate)])
+    Box::new(bsn_list! {
+
+                    @modal("扫雷帮助", body, actions, animate)
+
+                })
 }
 
 fn about_dialog(animate: bool) -> Box<dyn SceneList> {
-    let body = Box::new(bsn_list![
-        (
-            Text("扫雷 50.0")
-            TextFont { font_size: FontSize::Px(25.0) }
-            TextColor(Color::srgb(0.16, 0.16, 0.18))
-        ),
-        (
-            Text("使用 Bevy 0.19 原生 UI、BSN 场景、Feathers 控件和应用设置完整复刻 GNOME 扫雷。")
-            TextFont { font_size: FontSize::Px(17.0) }
-            TextColor(Color::srgb(0.24, 0.24, 0.26))
-        ),
-        (
-            Text("美术资源来自 GNOME Mines，采用 GPL-3.0-or-later 许可证。")
-            TextFont { font_size: FontSize::Px(15.0) }
-            TextColor(Color::srgb(0.40, 0.40, 0.42))
-        )
-    ]);
+    let body = Box::new(bsn_list! {
+
+                    Text("扫雷 50.0")
+                    TextFont { font_size: FontSize::Px(25.0) }
+                    TextColor(Color::srgb(0.16, 0.16, 0.18))
+                    --
+                    Text("使用 Bevy 0.20 原生 UI、BSN 场景、Feathers 控件和应用设置完整复刻 GNOME 扫雷。")
+                    TextFont { font_size: FontSize::Px(17.0) }
+                    TextColor(Color::srgb(0.24, 0.24, 0.26))
+                    --
+                    Text("美术资源来自 GNOME Mines，采用 GPL-3.0-or-later 许可证。")
+                    TextFont { font_size: FontSize::Px(15.0) }
+                    TextColor(Color::srgb(0.40, 0.40, 0.42))
+
+                });
     let actions = vec![boxed_button(
         "关闭",
         UiAction::CloseDialog,
         ButtonVariant::Primary,
     )];
-    Box::new(bsn_list![modal("关于扫雷", body, actions, animate)])
+    Box::new(bsn_list! {
+
+                    @modal("关于扫雷", body, actions, animate)
+
+                })
 }
 
 fn victory_dialog(snapshot: &UiSnapshot, animate: bool) -> Box<dyn SceneList> {
     let time = format!("你用 {} 清空了雷区。", format_time(snapshot.elapsed));
-    let body = Box::new(bsn_list![
-        (
-            Text("干得漂亮！")
-            TextFont { font_size: FontSize::Px(28.0) }
-            TextColor(Color::srgb(0.12, 0.45, 0.20))
-        ),
-        (
-            Text({time})
-            TextFont { font_size: FontSize::Px(19.0) }
-            TextColor(Color::srgb(0.20, 0.20, 0.22))
-        )
-    ]);
+    let body = Box::new(bsn_list! {
+
+                    Text("干得漂亮！")
+                    TextFont { font_size: FontSize::Px(28.0) }
+                    TextColor(Color::srgb(0.12, 0.45, 0.20))
+                    --
+                    Text({time})
+                    TextFont { font_size: FontSize::Px(19.0) }
+                    TextColor(Color::srgb(0.20, 0.20, 0.22))
+
+                });
     let actions = vec![
         boxed_button(
             "新游戏",
@@ -1802,23 +1851,35 @@ fn victory_dialog(snapshot: &UiSnapshot, animate: bool) -> Box<dyn SceneList> {
             ButtonVariant::Primary,
         ),
     ];
-    Box::new(bsn_list![modal("胜利", body, actions, animate)])
+    Box::new(bsn_list! {
+
+                    @modal("胜利", body, actions, animate)
+
+                })
 }
 
 fn action_button(label: &str, action: UiAction, variant: ButtonVariant) -> impl Scene {
     let label = label.to_owned();
     bsn! {
-        @FeathersButton {
-            @caption: bsn! { Text({label}) ThemedText },
-            @variant: {variant},
-        }
-        ActionTarget { action: {action} }
-        on(handle_action)
-    }
+
+
+                    @FeathersButton {
+                        @caption: bsn! { Text({label}) ThemedText },
+                        @variant: {variant},
+                    }
+                    ActionTarget { action: {action} }
+                    on(handle_action)
+
+
+                }
 }
 
 fn boxed_button(label: &str, action: UiAction, variant: ButtonVariant) -> Box<dyn SceneList> {
-    Box::new(bsn_list![action_button(label, action, variant)])
+    Box::new(bsn_list! {
+
+                    @action_button(label, action, variant)
+
+                })
 }
 
 fn handle_action(
@@ -1966,11 +2027,11 @@ fn custom_value_changed(
 
 pub fn initialize_number_inputs(
     inputs: Query<(Entity, &CustomInput), Added<CustomInput>>,
-    children: Query<&Children>,
-    mut text_inputs: Query<&mut EditableText>,
     settings: Res<Settings>,
     mut commands: Commands,
 ) {
+    // 0.20's number input is driven by the `NumberInputValue` component instead of the
+    // removed `UpdateNumberInput` event; re-inserting it re-renders the field text.
     for (entity, input) in &inputs {
         let value = match input.field {
             CustomField::Width => settings.custom_width as i32,
@@ -1979,42 +2040,27 @@ pub fn initialize_number_inputs(
                 / (settings.custom_width * settings.custom_height) as f64)
                 .round() as i32,
         };
-        if let Ok(children) = children.get(entity) {
-            for child in children.iter() {
-                if let Ok(mut text) = text_inputs.get_mut(child) {
-                    text.queue_edit(TextEdit::SelectAll);
-                    text.queue_edit(TextEdit::Insert(value.to_string().into()));
-                    commands
-                        .entity(child)
-                        .insert(TextColor(Color::srgb(0.12, 0.12, 0.13)));
-                    break;
-                }
-            }
-        }
-        commands.delayed().secs(0.05).trigger(UpdateNumberInput {
-            entity,
-            value: NumberInputValue::I32(value),
-        });
+        commands.entity(entity).insert(NumberInputValue::I32(value));
     }
 }
 
 pub fn use_system_ui_font(mut fonts: Query<&mut TextFont, Added<TextFont>>) {
     for mut font in &mut fonts {
-        font.font = FontSource::SystemUi;
+        font.font = FontSource::system_ui();
     }
 }
 
 fn cell_clicked(
-    mut click: On<Pointer<Click>>,
+    mut click: On<PointerClick>,
     cells: Query<&CellTarget>,
     keyboard: Res<ButtonInput<KeyCode>>,
     mut app: ResMut<MinesApp>,
     settings: Res<Settings>,
 ) {
-    if click.pointer_id.is_touch() {
+    if click.pointer.id.is_touch() {
         return;
     }
-    let Ok(target) = cells.get(click.event_target()) else {
+    let Ok(target) = cells.get(click.entity) else {
         return;
     };
     click.propagate(false);
@@ -2035,27 +2081,27 @@ fn cell_clicked(
     app.apply_cell_action(action, &settings);
 }
 
-fn cell_pressed(press: On<Pointer<Press>>, cells: Query<&CellTarget>, mut hold: ResMut<TouchHold>) {
-    let Some(touch_id) = press.pointer_id.get_touch_id() else {
+fn cell_pressed(press: On<PointerPress>, cells: Query<&CellTarget>, mut hold: ResMut<TouchHold>) {
+    let Some(touch_id) = press.pointer.id.get_touch_id() else {
         return;
     };
-    let Ok(target) = cells.get(press.event_target()) else {
+    let Ok(target) = cells.get(press.entity) else {
         return;
     };
     hold.active = Some((touch_id, target.index, Instant::now()));
 }
 
 fn cell_released(
-    mut release: On<Pointer<Release>>,
+    mut release: On<PointerRelease>,
     cells: Query<&CellTarget>,
     mut hold: ResMut<TouchHold>,
     mut app: ResMut<MinesApp>,
     settings: Res<Settings>,
 ) {
-    let Some(touch_id) = release.pointer_id.get_touch_id() else {
+    let Some(touch_id) = release.pointer.id.get_touch_id() else {
         return;
     };
-    let Ok(target) = cells.get(release.event_target()) else {
+    let Ok(target) = cells.get(release.entity) else {
         return;
     };
     let Some((held_id, held_index, started)) = hold.active.take() else {
