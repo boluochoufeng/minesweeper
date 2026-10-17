@@ -182,5 +182,3 @@ fn keyboard_shortcuts(
         session.process_outcome(&mut scores);
     }
 }
-
-

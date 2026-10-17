@@ -4,7 +4,7 @@
 // all of them so screens and dialogs stay free of game-flow logic.
 
 use crate::state::{DialogKind, GameSession, PendingAction, Screen};
-use crate::storage::{save_progress, Scores, Settings};
+use crate::storage::{Scores, Settings, save_progress};
 use bevy::app::AppExit;
 use bevy::prelude::*;
 use bevy::settings::SaveSettingsSync;
@@ -78,7 +78,8 @@ fn handle_ui_action(
             session.help_page = session.help_page.saturating_sub(1);
         }
         UiAction::HelpNext => {
-            session.help_page = (session.help_page + 1).min(crate::ui::dialogs::HELP_PAGE_COUNT - 1);
+            session.help_page =
+                (session.help_page + 1).min(crate::ui::dialogs::HELP_PAGE_COUNT - 1);
         }
         UiAction::Quit => {
             save_progress(&settings, &scores.0);

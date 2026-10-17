@@ -3,14 +3,12 @@
 // App-wide UI concerns: UI scale/fonts, window state and persistence.
 
 use crate::state::GameSession;
-use crate::storage::{save_progress, Scores, Settings};
+use crate::storage::{MIN_WINDOW_HEIGHT, MIN_WINDOW_WIDTH, Scores, Settings, save_progress};
 use crate::theme::ui_font;
 use bevy::prelude::*;
 use bevy::settings::{SaveSettingsDeferred, SaveSettingsSync};
 use bevy::text::{FontSource, RemSize};
-use bevy::window::{
-    PrimaryWindow, WindowCloseRequested, WindowFocused, WindowResizeConstraints,
-};
+use bevy::window::{PrimaryWindow, WindowCloseRequested, WindowFocused, WindowResizeConstraints};
 use std::time::Duration;
 use winit::window::Icon;
 
@@ -69,7 +67,11 @@ impl Plugin for ShellPlugin {
     }
 }
 
-fn sync_ui_scale(settings: Res<Settings>, mut metrics: ResMut<UiMetrics>, mut rem: ResMut<RemSize>) {
+fn sync_ui_scale(
+    settings: Res<Settings>,
+    mut metrics: ResMut<UiMetrics>,
+    mut rem: ResMut<RemSize>,
+) {
     let desired = settings.ui_scale_factor();
     if (metrics.scale - desired).abs() > f32::EPSILON {
         metrics.scale = desired;
@@ -128,12 +130,6 @@ fn close_and_save(
         commands.write_message(bevy::app::AppExit::Success);
     }
 }
-
-/// Minimum window size (logical px) needed by the redesigned layouts: the
-/// difficulty picker wraps to a single column below ~660 px and the board
-/// screen can no longer fit a 16 × 16 grid.
-const MIN_WINDOW_WIDTH: f32 = 700.0;
-const MIN_WINDOW_HEIGHT: f32 = 600.0;
 
 pub fn apply_window_settings(mut window: Single<&mut Window>, settings: Res<Settings>) {
     window.resolution.set(
@@ -200,15 +196,13 @@ pub fn native_window_sync(world: &mut World) {
     // programmatic resizes here as well: below this the difficulty picker and
     // the large board get clipped. Minimized windows report a near-zero size,
     // which must not be "corrected".
-    let smaller_than_minimum = width > 1.0
-        && height > 1.0
-        && (width < MIN_WINDOW_WIDTH || height < MIN_WINDOW_HEIGHT);
+    let smaller_than_minimum =
+        width > 1.0 && height > 1.0 && (width < MIN_WINDOW_WIDTH || height < MIN_WINDOW_HEIGHT);
     if smaller_than_minimum {
         if let Some(mut window) = world.get_mut::<Window>(window_entity) {
-            window.resolution.set(
-                width.max(MIN_WINDOW_WIDTH),
-                height.max(MIN_WINDOW_HEIGHT),
-            );
+            window
+                .resolution
+                .set(width.max(MIN_WINDOW_WIDTH), height.max(MIN_WINDOW_HEIGHT));
         }
         return;
     }

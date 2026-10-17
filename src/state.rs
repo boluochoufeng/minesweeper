@@ -176,7 +176,6 @@ impl GameSession {
     }
 
     pub fn toggle_pause(&mut self) {
-
         if self.clock.has_started() {
             self.set_paused(!self.paused, true);
         }
@@ -272,4 +271,3 @@ impl GameSession {
         board.mine_count as i64 - board.flag_count as i64
     }
 }
-

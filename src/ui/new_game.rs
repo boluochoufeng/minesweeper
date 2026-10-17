@@ -10,9 +10,7 @@ use crate::ui::actions::{ActionTarget, UiAction};
 use crate::ui::menu;
 use crate::ui::style::{FONT_CAPTION, FONT_DISPLAY, FONT_SUBTITLE};
 use bevy::feathers::controls::{ButtonVariant, FeathersButton};
-use bevy::feathers::theme::{
-    ThemeBackgroundColor, ThemeBorderColor, ThemeTextColor, ThemedText,
-};
+use bevy::feathers::theme::{ThemeBackgroundColor, ThemeBorderColor, ThemeTextColor, ThemedText};
 use bevy::prelude::*;
 use bevy::state::state_scoped::DespawnOnExit;
 use bevy::ui::rem;
@@ -89,6 +87,7 @@ fn new_game_screen(assets: &GameAssets) -> impl Scene {
 fn difficulty_card(title: &str, subtitle: &str, action: UiAction) -> Box<dyn SceneList> {
     let title = title.to_owned();
     let subtitle = subtitle.to_owned();
+    let accessible = format!("{title} {subtitle}");
     Box::new(bsn! {
         @FeathersButton {
             @caption: bsn! {
@@ -111,6 +110,7 @@ fn difficulty_card(title: &str, subtitle: &str, action: UiAction) -> Box<dyn Sce
             @variant: ButtonVariant::Normal,
         }
         ActionTarget { action: {action} }
+        AccessibleLabel({accessible})
         Node {
             width: rem(13.0),
             height: rem(7.0),

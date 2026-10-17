@@ -10,7 +10,7 @@ use crate::assets::{
 use crate::game::{Board, Cell, Mark, Outcome};
 use crate::state::{CellAction, GameSession, PendingAction, Screen};
 use crate::storage::{Scores, Settings};
-use crate::theme::{tokens, ThemePalette};
+use crate::theme::{ThemePalette, tokens};
 use crate::ui::actions::{ActionTarget, UiAction};
 use crate::ui::animation::UiTransition;
 use crate::ui::menu;
@@ -22,8 +22,8 @@ use bevy::feathers::display::ThemedIcon;
 use bevy::feathers::theme::{ThemeBackgroundColor, ThemeBorderColor, ThemeTextColor, ThemedText};
 use bevy::picking::events::{PointerClick, PointerPress, PointerRelease};
 use bevy::prelude::*;
-use bevy::text::LineHeight;
 use bevy::state::state_scoped::DespawnOnExit;
+use bevy::text::LineHeight;
 use bevy::ui::rem;
 use bevy::window::PrimaryWindow;
 use std::time::{Duration, Instant};
@@ -95,7 +95,11 @@ impl Plugin for BoardScreenPlugin {
     }
 }
 
-fn clear_board_state(mut commands: Commands, mut overlay: ResMut<PauseOverlay>, mut root: ResMut<BoardScreenRoot>) {
+fn clear_board_state(
+    mut commands: Commands,
+    mut overlay: ResMut<PauseOverlay>,
+    mut root: ResMut<BoardScreenRoot>,
+) {
     commands.remove_resource::<BoardView>();
     root.0 = None;
     overlay.0 = None;
@@ -114,7 +118,9 @@ fn spawn_game_screen(
     };
     let style = BoardStyle::parse(&settings.theme);
     let entity = commands
-        .spawn_scene(game_screen(&assets, &settings, &session, board, style, &metrics))
+        .spawn_scene(game_screen(
+            &assets, &settings, &session, board, style, &metrics,
+        ))
         .insert(DespawnOnExit(Screen::Playing))
         .id();
     root.0 = Some(entity);
@@ -141,17 +147,27 @@ fn game_screen(
     let back = style::icon_button(
         assets.icons.back.clone(),
         UiAction::Pending(PendingAction::ShowNewGame),
+        "返回",
     );
     let restart = style::icon_button(
         assets.icons.restart.clone(),
         UiAction::Pending(PendingAction::Restart),
+        "重新开始",
     );
     let pause_icon = if paused {
         assets.icons.play.clone()
     } else {
         assets.icons.pause.clone()
     };
-    let pause = pause_header_button(pause_icon, pause_action);
+    let pause = pause_header_button(
+        pause_icon,
+        pause_action,
+        if paused { "继续" } else { "暂停" },
+    );
+    let grid_label = format!(
+        "扫雷棋盘 {} × {}，{} 个雷",
+        board.width, board.height, board.mine_count
+    );
     let header = menu::header(
         "扫雷".to_owned(),
         Some(subtitle),
@@ -191,6 +207,7 @@ fn game_screen(
                         justify_content: JustifyContent::Center,
                     }
                     BoardGrid
+                    AccessibleLabel({grid_label})
                 ]
                 --
                 {status}
@@ -199,11 +216,12 @@ fn game_screen(
     }
 }
 
-fn pause_header_button(icon: Handle<Image>, action: UiAction) -> Box<dyn SceneList> {
-    style::boxed_list(bsn_list! { @pause_header_button_scene(icon, action) })
+fn pause_header_button(icon: Handle<Image>, action: UiAction, label: &str) -> Box<dyn SceneList> {
+    let label = label.to_owned();
+    style::boxed_list(bsn_list! { @pause_header_button_scene(icon, action, label) })
 }
 
-fn pause_header_button_scene(icon: Handle<Image>, action: UiAction) -> impl Scene {
+fn pause_header_button_scene(icon: Handle<Image>, action: UiAction, label: String) -> impl Scene {
     bsn! {
         @FeathersButton {
             @caption: bsn! {
@@ -215,6 +233,7 @@ fn pause_header_button_scene(icon: Handle<Image>, action: UiAction) -> impl Scen
             @variant: ButtonVariant::Plain,
         }
         ActionTarget { action: {action} }
+        AccessibleLabel({label})
     }
 }
 
@@ -233,14 +252,7 @@ fn setup_board(
     for grid in &grids {
         let mut cells = Vec::with_capacity(board.cells.len());
         for index in 0..board.cells.len() {
-            let entity = spawn_cell(
-                &mut commands,
-                board,
-                index,
-                style,
-                &palette.0,
-                &assets,
-            );
+            let entity = spawn_cell(&mut commands, board, index, style, &palette.0, &assets);
             cells.push(entity);
         }
         commands.entity(grid).add_children(&cells);
@@ -259,10 +271,7 @@ fn setup_board(
     }
 }
 
-fn grid_background(
-    style: BoardStyle,
-    palette: &crate::theme::palette::Palette,
-) -> Color {
+fn grid_background(style: BoardStyle, palette: &crate::theme::palette::Palette) -> Color {
     // Fills the tiny gaps left between rounded cell corners so the grid reads as
     // a continuous lattice instead of exposing the board surface underneath.
     if style.is_modern() {
@@ -320,11 +329,7 @@ fn cell_glyph(cell: Cell, board: &Board, index: usize) -> Option<usize> {
         }
     }
     if cell.revealed {
-        if cell.mine {
-            Some(GLYPH_MINE)
-        } else {
-            None
-        }
+        if cell.mine { Some(GLYPH_MINE) } else { None }
     } else {
         match cell.mark {
             Mark::None => None,
@@ -334,11 +339,7 @@ fn cell_glyph(cell: Cell, board: &Board, index: usize) -> Option<usize> {
     }
 }
 
-fn glyph_tint(
-    glyph: usize,
-    style: BoardStyle,
-    palette: &crate::theme::palette::Palette,
-) -> Color {
+fn glyph_tint(glyph: usize, style: BoardStyle, palette: &crate::theme::palette::Palette) -> Color {
     if !style.is_modern() {
         return Color::WHITE;
     }
@@ -458,15 +459,13 @@ fn fit_board(
         return;
     };
     let scale = window.scale_factor();
-    let available_width =
-        (window.width() - 2.0 * metrics.content_pad()).max(120.0);
+    let available_width = (window.width() - 2.0 * metrics.content_pad()).max(120.0);
     let available_height = (window.height()
         - metrics.header_height()
         - metrics.status_height()
         - 3.0 * metrics.content_pad())
     .max(120.0);
-    let cell = ((available_width / board.width as f32)
-        .min(available_height / board.height as f32)
+    let cell = ((available_width / board.width as f32).min(available_height / board.height as f32)
         * scale)
         .floor()
         .max(6.0)
@@ -496,7 +495,12 @@ fn sync_board(
     view: Option<ResMut<BoardView>>,
     mut commands: Commands,
     mut cells: Query<
-        (&CellIndex, &mut BackgroundColor, &mut BorderColor, &mut Node),
+        (
+            &CellIndex,
+            &mut BackgroundColor,
+            &mut BorderColor,
+            &mut Node,
+        ),
         Without<BoardGrid>,
     >,
     mut grids: Query<&mut BackgroundColor, (With<BoardGrid>, Without<CellIndex>)>,
@@ -516,13 +520,15 @@ fn sync_board(
     // marked), even though most cells keep their own state.
     let outcome_changed = board.outcome != view.last_outcome;
     let cursor = if session.keyboard_active {
-        Some(session.keyboard_cursor.min(board.cells.len().saturating_sub(1)))
+        Some(
+            session
+                .keyboard_cursor
+                .min(board.cells.len().saturating_sub(1)),
+        )
     } else {
         None
     };
-    if palette_changed
-        && let Ok(mut grid_bg) = grids.get_mut(view.grid)
-    {
+    if palette_changed && let Ok(mut grid_bg) = grids.get_mut(view.grid) {
         grid_bg.0 = grid_background(view.style, &palette.0);
     }
 
@@ -592,34 +598,38 @@ fn sync_pause_overlay(
             .insert((DespawnOnExit(Screen::Playing), GlobalZIndex(50)))
             .id();
         overlay.0 = Some(entity);
-    } else if !should_show
-        && let Some(entity) = overlay.0.take()
-    {
+    } else if !should_show && let Some(entity) = overlay.0.take() {
         commands.entity(entity).despawn();
     }
 }
 
-/// Keep the header button glyph in sync with the pause state.
+/// Keep the header button glyph and accessible name in sync with the pause
+/// state.
 fn sync_pause_icon(
     session: Res<GameSession>,
     assets: Res<GameAssets>,
-    mut icons: Query<&mut ImageNode, With<PauseHeaderIcon>>,
+    mut icons: Query<(&mut ImageNode, &ChildOf), With<PauseHeaderIcon>>,
+    mut commands: Commands,
 ) {
     let want = if session.paused {
         assets.icons.play.clone()
     } else {
         assets.icons.pause.clone()
     };
-    for mut node in &mut icons {
+    let label = if session.paused { "继续" } else { "暂停" };
+    for (mut node, child_of) in &mut icons {
         if node.image != want {
             node.image = want.clone();
+            commands
+                .entity(child_of.parent())
+                .insert(AccessibleLabel(label.to_owned()));
         }
     }
 }
 
 fn pause_overlay(_assets: &GameAssets, palette: &ThemePalette) -> impl Scene {
     let resume = style::text_button("继续游戏", UiAction::TogglePause, ButtonVariant::Primary);
-        bsn! {
+    bsn! {
         Node {
             position_type: PositionType::Absolute,
             left: px(0),
@@ -685,11 +695,7 @@ fn cell_clicked(
     session.process_outcome(&mut scores);
 }
 
-fn cell_pressed(
-    press: On<PointerPress>,
-    cells: Query<&CellIndex>,
-    mut hold: ResMut<TouchHold>,
-) {
+fn cell_pressed(press: On<PointerPress>, cells: Query<&CellIndex>, mut hold: ResMut<TouchHold>) {
     let Some(touch_id) = press.pointer.id.get_touch_id() else {
         return;
     };

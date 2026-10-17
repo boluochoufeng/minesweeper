@@ -8,7 +8,7 @@ use crate::storage::{Score, Scores};
 use crate::theme::{ThemePalette, tokens};
 use crate::ui::status::format_time;
 use crate::ui::style::{FONT_BODY, FONT_CAPTION};
-use bevy::feathers::theme::{ThemeTextColor, ThemedText, ThemeToken};
+use bevy::feathers::theme::{ThemeTextColor, ThemeToken, ThemedText};
 use bevy::prelude::*;
 use bevy::ui::{Overflow, OverflowAxis, ScrollPosition, rem};
 use bevy::ui_widgets::ScrollArea;

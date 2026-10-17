@@ -3,14 +3,13 @@
 // Header bar and the application menu. The menu is a Feathers popover attached
 // to an icon button, so it needs no separate dialog state.
 
+use crate::assets::GameAssets;
 use crate::state::{DialogKind, PendingAction};
 use crate::theme::tokens;
 use crate::ui::actions::{ActionTarget, UiAction};
 use crate::ui::style::{self, FONT_BODY, FONT_CAPTION, FONT_TITLE, HEADER_HEIGHT};
-use crate::assets::GameAssets;
 use bevy::feathers::controls::{
-    FeathersMenu, FeathersMenuButton, FeathersMenuDivider, FeathersMenuItem,
-    FeathersMenuPopup,
+    FeathersMenu, FeathersMenuButton, FeathersMenuDivider, FeathersMenuItem, FeathersMenuPopup,
 };
 use bevy::feathers::display::ThemedIcon;
 use bevy::feathers::theme::{ThemeBackgroundColor, ThemeBorderColor, ThemeTextColor, ThemedText};
@@ -105,11 +104,11 @@ pub fn menu_button(assets: &GameAssets) -> Box<dyn SceneList> {
                 },
                 @arrow: false,
             }
+            AccessibleLabel("菜单")
             --
             {popup}
         ]
     })
-
 }
 
 fn menu_popup() -> Box<dyn SceneList> {
@@ -165,21 +164,21 @@ fn menu_popup() -> Box<dyn SceneList> {
 }
 
 fn menu_item(label: &str, action: UiAction) -> Box<dyn SceneList> {
-    let label = label.to_owned();
+    let caption = label.to_owned();
+    let accessible = label.to_owned();
     Box::new(bsn! {
         @FeathersMenuItem {
             @caption: bsn! {
-                Text({label})
+                Text({caption})
                 TextFont { font_size: FontSize::Rem(FONT_BODY) }
                 ThemedText
             },
         }
         ActionTarget { action: {action} }
+        AccessibleLabel({accessible})
     })
 }
 
 fn menu_divider() -> Box<dyn SceneList> {
     Box::new(bsn! { @FeathersMenuDivider })
 }
-
-

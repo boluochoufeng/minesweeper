@@ -40,7 +40,6 @@ impl UiTransition {
         }
     }
 
-
     pub const fn dialog(enabled: bool) -> Self {
         if enabled {
             Self {
@@ -70,7 +69,6 @@ impl UiTransition {
             Self::none()
         }
     }
-
 }
 
 pub struct AnimationPlugin;
@@ -94,7 +92,8 @@ fn animate_transitions(
         }
 
         transition.elapsed += time.delta_secs();
-        let linear = ((transition.elapsed - transition.delay) / transition.duration).clamp(0.0, 1.0);
+        let linear =
+            ((transition.elapsed - transition.delay) / transition.duration).clamp(0.0, 1.0);
         let eased = easing(linear, transition.easing);
         let scale = transition.from_scale + (1.0 - transition.from_scale) * eased;
         let y = transition.from_y * (1.0 - eased);

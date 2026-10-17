@@ -33,12 +33,14 @@ pub fn boxed_list(list: impl SceneList + 'static) -> Box<dyn SceneList> {
 }
 
 /// An icon-only flat button that emits an [`UiAction`]. The glyph is tinted by
-/// the button's inherited text color, so it follows the active theme.
-pub fn icon_button(handle: Handle<Image>, action: UiAction) -> Box<dyn SceneList> {
-    boxed_list(bsn_list! { @icon_button_scene(handle, action) })
+/// the button's inherited text color, so it follows the active theme. `label`
+/// is exposed as the accessible name, which icon-only buttons otherwise lack.
+pub fn icon_button(handle: Handle<Image>, action: UiAction, label: &str) -> Box<dyn SceneList> {
+    let label = label.to_owned();
+    boxed_list(bsn_list! { @icon_button_scene(handle, action, label) })
 }
 
-fn icon_button_scene(handle: Handle<Image>, action: UiAction) -> impl Scene {
+fn icon_button_scene(handle: Handle<Image>, action: UiAction, label: String) -> impl Scene {
     bsn! {
         @FeathersButton {
             @caption: bsn! {
@@ -49,24 +51,27 @@ fn icon_button_scene(handle: Handle<Image>, action: UiAction) -> impl Scene {
             @variant: ButtonVariant::Plain,
         }
         ActionTarget { action: {action} }
+        AccessibleLabel({label})
     }
 }
 
 /// A labelled button that emits an [`UiAction`].
 pub fn text_button(label: &str, action: UiAction, variant: ButtonVariant) -> Box<dyn SceneList> {
-    let label = label.to_owned();
-    boxed_list(bsn_list! { @text_button_scene(label, action, variant) })
+    let caption = label.to_owned();
+    let accessible = label.to_owned();
+    boxed_list(bsn_list! { @text_button_scene(caption, accessible, action, variant) })
 }
 
 /// A labelled button that is visible but cannot be activated (dimmed by the
 /// theme's disabled tokens). Used where an action is unavailable, e.g. paging
 /// past the last help page.
 pub fn disabled_button(label: &str) -> Box<dyn SceneList> {
-    let label = label.to_owned();
-    boxed_list(bsn_list! { @disabled_button_scene(label) })
+    let caption = label.to_owned();
+    let accessible = label.to_owned();
+    boxed_list(bsn_list! { @disabled_button_scene(caption, accessible) })
 }
 
-fn disabled_button_scene(label: String) -> impl Scene {
+fn disabled_button_scene(label: String, accessible: String) -> impl Scene {
     bsn! {
         @FeathersButton {
             @caption: bsn! {
@@ -75,11 +80,17 @@ fn disabled_button_scene(label: String) -> impl Scene {
                 ThemedText
             },
         }
+        AccessibleLabel({accessible})
         bevy::ui::InteractionDisabled
     }
 }
 
-fn text_button_scene(label: String, action: UiAction, variant: ButtonVariant) -> impl Scene {
+fn text_button_scene(
+    label: String,
+    accessible: String,
+    action: UiAction,
+    variant: ButtonVariant,
+) -> impl Scene {
     bsn! {
         @FeathersButton {
             @caption: bsn! {
@@ -90,6 +101,6 @@ fn text_button_scene(label: String, action: UiAction, variant: ButtonVariant) ->
             @variant: {variant},
         }
         ActionTarget { action: {action} }
+        AccessibleLabel({accessible})
     }
 }
-

@@ -9,14 +9,14 @@ pub mod tokens;
 
 use crate::storage::Settings;
 use bevy::color::{Alpha, Luminance};
-use bevy::prelude::*;
-use bevy::text::FontSource;
-use bevy::window::{PrimaryWindow, WindowTheme};
 use bevy::feathers::{
     dark_theme::create_dark_theme,
     theme::{InheritableThemeTextColor, ThemeProps, UiTheme},
     tokens::semantic,
 };
+use bevy::prelude::*;
+use bevy::text::FontSource;
+use bevy::window::{PrimaryWindow, WindowTheme};
 use palette::Palette;
 
 /// User preference for the UI color theme.
@@ -91,8 +91,7 @@ pub struct ActiveTheme {
 
 /// Font family chain used for all UI text. Covers Latin and CJK glyphs through
 /// the system font database (`system_font_discovery`).
-pub const UI_FONT_FAMILIES: &str =
-    "Noto Sans SC, Noto Sans CJK SC, Microsoft YaHei UI, Microsoft YaHei, PingFang SC, Noto Sans, sans-serif";
+pub const UI_FONT_FAMILIES: &str = "Noto Sans SC, Noto Sans CJK SC, Microsoft YaHei UI, Microsoft YaHei, PingFang SC, Noto Sans, sans-serif";
 
 /// Resolved UI font source.
 pub fn ui_font() -> FontSource {
@@ -119,10 +118,7 @@ impl Plugin for ThemePlugin {
             .insert_resource(ThemePalette(palette))
             .init_resource::<ActiveTheme>()
             .init_resource::<ThemeRevision>()
-            .add_systems(
-                Update,
-                (sync_theme, repaint_inherited_text_colors).chain(),
-            );
+            .add_systems(Update, (sync_theme, repaint_inherited_text_colors).chain());
     }
 }
 
@@ -244,13 +240,14 @@ pub fn build_theme(palette: &Palette) -> ThemeProps {
     theme
         .semantic_base
         .insert(semantic::FILL_ITEM_DEFAULT, Color::NONE);
-    theme
-        .semantic_base
-        .insert(semantic::FILL_NONE, Color::NONE);
+    theme.semantic_base.insert(semantic::FILL_NONE, Color::NONE);
 
     // The Feathers dark theme assumes white-ish text on dark controls; the light
     // palettes need those text tokens mapped back to the default text color.
-    let text_tokens: [(&bevy::feathers::theme::ThemeToken, &bevy::feathers::theme::SemanticToken); 5] = [
+    let text_tokens: [(
+        &bevy::feathers::theme::ThemeToken,
+        &bevy::feathers::theme::SemanticToken,
+    ); 5] = [
         (
             &bevy::feathers::tokens::BUTTON_TEXT,
             &semantic::TEXT_DEFAULT,
@@ -342,10 +339,9 @@ pub fn build_theme(palette: &Palette) -> ThemeProps {
             .token_assignments
             .insert(design, tokens::SLIDER_TRACK_SEM);
     }
-    theme.token_assignments.insert(
-        bevy::feathers::tokens::SLIDER_BAR,
-        tokens::SLIDER_FILL_SEM,
-    );
+    theme
+        .token_assignments
+        .insert(bevy::feathers::tokens::SLIDER_BAR, tokens::SLIDER_FILL_SEM);
     for design in [
         bevy::feathers::tokens::SLIDER_BAR_HOVER,
         bevy::feathers::tokens::SLIDER_BAR_PRESSED,
@@ -359,7 +355,10 @@ pub fn build_theme(palette: &Palette) -> ThemeProps {
         tokens::SLIDER_FILL_SEM,
     );
 
-    let assignments: Vec<(bevy::feathers::theme::ThemeToken, bevy::feathers::theme::SemanticToken)> = vec![
+    let assignments: Vec<(
+        bevy::feathers::theme::ThemeToken,
+        bevy::feathers::theme::SemanticToken,
+    )> = vec![
         (tokens::HEADER_BG, tokens::HEADER_BG_SEM),
         (tokens::HEADER_BORDER, tokens::HEADER_BORDER_SEM),
         (tokens::SURFACE_BG, tokens::SURFACE_BG_SEM),

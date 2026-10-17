@@ -13,11 +13,11 @@ mod storage;
 mod theme;
 mod ui;
 
+use assets::AssetsPlugin;
 use bevy::feathers::FeathersPlugins;
 use bevy::prelude::*;
-use bevy::settings::SettingsPlugin;
+use bevy::settings::{SaveSettingsSync, SettingsPlugin};
 use bevy::window::{ExitCondition, WindowResolution};
-use assets::AssetsPlugin;
 use input::InputPlugin;
 use state::{GameSession, Screen};
 use storage::{Difficulty, PersistentData, Scores, Settings};
@@ -29,35 +29,67 @@ use ui::MinesUiPlugin;
 struct CliDifficulty(Option<Difficulty>);
 
 fn main() {
-    let persistent = PersistentData::load();
-    let legacy_settings = persistent.settings.clone();
     let cli_difficulty = parse_cli();
 
-    App::new()
-        .register_type::<Difficulty>()
+    let mut app = App::new();
+    // `DefaultPlugins` installs the log plugin, so the save file is read only
+    // after this point: warnings about an unreadable or corrupt `data.json`
+    // then reach the log instead of being silently dropped.
+    app.add_plugins(DefaultPlugins.set(WindowPlugin {
+        primary_window: Some(Window {
+            title: "扫雷".to_owned(),
+            name: Some("org.gnome.Mines".to_owned()),
+            resolution: WindowResolution::new(720, 760),
+            resizable: true,
+            ..default()
+        }),
+        exit_condition: ExitCondition::DontExit,
+        ..default()
+    }));
+
+    let mut persistent = PersistentData::load();
+    storage::sanitize_settings(&mut persistent.settings);
+    // `SettingsPlugin` loads `settings.toml` during `add_plugins` and leaves an
+    // already-inserted `Settings` resource untouched when the file is missing.
+    // The legacy `data.json` snapshot is therefore used as the first-run value
+    // and is written out to TOML once the app is running.
+    let migrate_settings = storage::needs_settings_migration();
+
+    app.register_type::<Difficulty>()
         .register_type::<Settings>()
-        .insert_resource(legacy_settings)
+        .insert_resource(persistent.settings.clone())
         .insert_resource(Scores(persistent.scores.clone()))
         .insert_resource(CliDifficulty(cli_difficulty))
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window {
-                title: "扫雷".to_owned(),
-                name: Some("org.gnome.Mines".to_owned()),
-                resolution: WindowResolution::new(720, 760),
-                resizable: true,
-                ..default()
-            }),
-            exit_condition: ExitCondition::DontExit,
-            ..default()
-        }))
         .add_plugins(SettingsPlugin::new("org.gnome.Mines"))
         .add_plugins(FeathersPlugins)
         .init_state::<Screen>()
         .init_resource::<state::GameSession>()
         .init_resource::<state::EscapeGuard>()
         .add_plugins((AssetsPlugin, ThemePlugin, MinesUiPlugin, InputPlugin))
-        .add_systems(Startup, (spawn_camera, apply_cli_difficulty).chain())
-        .run();
+        .add_systems(Startup, (spawn_camera, apply_cli_difficulty).chain());
+
+    if migrate_settings {
+        info!("Migrating settings from data.json to settings.toml");
+        app.add_systems(Startup, persist_migrated_settings);
+    }
+
+    // Opt-in diagnostics: `MINES_PERF=1` logs FPS and frame time once per
+    // second, which makes release-build UI cost easy to measure.
+    if std::env::var_os("MINES_PERF").is_some() {
+        info!("Performance diagnostics enabled (MINES_PERF)");
+        app.add_plugins((
+            bevy::diagnostic::FrameTimeDiagnosticsPlugin::default(),
+            bevy::diagnostic::LogDiagnosticsPlugin::default(),
+        ));
+    }
+
+    app.run();
+}
+
+/// Write the migrated settings to `settings.toml` exactly once, on the first
+/// launch that finds a legacy `data.json` but no modern settings file.
+fn persist_migrated_settings(mut commands: Commands) {
+    commands.queue(SaveSettingsSync::Always);
 }
 
 fn spawn_camera(mut commands: Commands) {

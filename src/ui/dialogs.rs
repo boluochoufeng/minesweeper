@@ -17,7 +17,7 @@ use bevy::feathers::controls::{
     ButtonVariant, FeathersDialog, FeathersDialogBody, FeathersDialogClose, FeathersDialogFooter,
     FeathersDialogHeader,
 };
-use bevy::feathers::theme::{ThemeTextColor, ThemedText, ThemeToken};
+use bevy::feathers::theme::{ThemeTextColor, ThemeToken, ThemedText};
 use bevy::prelude::*;
 use bevy::ui::rem;
 use bevy::ui_widgets::{ModalDialogBarrier, RequestClose};

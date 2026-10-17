@@ -120,4 +120,5 @@ pub const SLIDER_TRACK_SEM: SemanticToken = SemanticToken::new_static("mines.sli
 /// Filled value portion of a slider.
 pub const SLIDER_FILL_SEM: SemanticToken = SemanticToken::new_static("mines.slider.fill");
 /// Filled value portion of a slider while hovered.
-pub const SLIDER_FILL_HOVER_SEM: SemanticToken = SemanticToken::new_static("mines.slider.fill.hover");
+pub const SLIDER_FILL_HOVER_SEM: SemanticToken =
+    SemanticToken::new_static("mines.slider.fill.hover");

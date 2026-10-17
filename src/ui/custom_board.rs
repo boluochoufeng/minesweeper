@@ -45,11 +45,7 @@ impl Plugin for CustomBoardScreenPlugin {
     }
 }
 
-fn spawn_custom_board(
-    mut commands: Commands,
-    assets: Res<GameAssets>,
-    settings: Res<Settings>,
-) {
+fn spawn_custom_board(mut commands: Commands, assets: Res<GameAssets>, settings: Res<Settings>) {
     let mut entity = commands.spawn_scene(custom_screen(&assets, &settings));
     entity.insert(DespawnOnExit(Screen::CustomBoard));
 }
@@ -58,6 +54,7 @@ fn custom_screen(assets: &GameAssets, settings: &Settings) -> impl Scene {
     let back = style::icon_button(
         assets.icons.back.clone(),
         UiAction::Pending(PendingAction::ShowNewGame),
+        "返回",
     );
     let header = menu::header(
         "自定义棋盘".to_owned(),
