@@ -6,17 +6,17 @@
 use crate::assets::GameAssets;
 use crate::state::{PendingAction, Screen};
 use crate::storage::{Difficulty, Settings};
-use crate::theme::{tokens, ThemePalette};
+use crate::theme::tokens;
 use crate::ui::actions::UiAction;
 use crate::ui::menu;
 use crate::ui::style::{self, FONT_BODY, FONT_CAPTION, FONT_TITLE};
 use bevy::feathers::controls::{
     ButtonVariant, FeathersNumberInput, HardLimit, NumberInputRange, NumberInputValue, SoftLimit,
 };
-use bevy::feathers::theme::{ThemeBackgroundColor, ThemeTextColor, ThemedText};
+use bevy::feathers::theme::{ThemeBackgroundColor, ThemeBorderColor, ThemeTextColor, ThemedText};
 use bevy::prelude::*;
 use bevy::state::state_scoped::DespawnOnExit;
-use bevy::ui::rem;
+use bevy::ui::{px, rem};
 use bevy::ui_widgets::ValueChange;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -48,17 +48,15 @@ impl Plugin for CustomBoardScreenPlugin {
 fn spawn_custom_board(
     mut commands: Commands,
     assets: Res<GameAssets>,
-    palette: Res<ThemePalette>,
     settings: Res<Settings>,
 ) {
-    let mut entity = commands.spawn_scene(custom_screen(&assets, &palette, &settings));
+    let mut entity = commands.spawn_scene(custom_screen(&assets, &settings));
     entity.insert(DespawnOnExit(Screen::CustomBoard));
 }
 
-fn custom_screen(assets: &GameAssets, palette: &ThemePalette, settings: &Settings) -> impl Scene {
+fn custom_screen(assets: &GameAssets, settings: &Settings) -> impl Scene {
     let back = style::icon_button(
         assets.icons.back.clone(),
-        palette.0.text_primary,
         UiAction::Pending(PendingAction::ShowNewGame),
     );
     let header = menu::header(
@@ -67,7 +65,6 @@ fn custom_screen(assets: &GameAssets, palette: &ThemePalette, settings: &Setting
         vec![back],
         Vec::new(),
         assets,
-        palette,
     );
     let percentage = if settings.custom_width * settings.custom_height > 0 {
         (100.0 * settings.custom_mines as f64
@@ -108,17 +105,24 @@ fn custom_screen(assets: &GameAssets, palette: &ThemePalette, settings: &Setting
             Children [
                 Node {
                     width: percent(100),
-                    max_width: rem(24),
+                    max_width: rem(26),
                     flex_direction: FlexDirection::Column,
-                    row_gap: rem(0.9),
+                    row_gap: rem(1.0),
+                    padding: rem(1.4),
+                    border: UiRect::all(px(1.0)),
+                    border_radius: BorderRadius::all(rem(style::RADIUS_CARD)),
                 }
                 ThemeBackgroundColor(tokens::SURFACE_BG)
+                ThemeBorderColor(tokens::SURFACE_BORDER)
                 Children [
-                    Text("自定义棋盘")
+                    Text("棋盘尺寸")
                     TextFont { font_size: FontSize::Rem(FONT_TITLE) }
                     ThemeTextColor(tokens::TEXT_MAIN) ThemedText
                     --
                     {rows}
+                    --
+                    Node { height: px(1.0), width: percent(100) }
+                    ThemeBackgroundColor(tokens::SURFACE_BORDER)
                     --
                     SummaryText
                     Text({summary})
@@ -144,18 +148,18 @@ fn number_row(
         Node {
             width: percent(100),
             align_items: AlignItems::Center,
-            justify_content: JustifyContent::SpaceBetween,
-            column_gap: rem(0.8),
+            column_gap: rem(1.0),
         }
         Children [
             Text({label})
             TextFont { font_size: FontSize::Rem({FONT_BODY}) }
             ThemeTextColor(tokens::TEXT_MAIN) ThemedText
+            Node { width: rem(5.0) }
             --
             @FeathersNumberInput
             CustomFieldTarget { field: {field} }
             NumberInputValue::I32({value})
-            Node { width: rem(8.5) }
+            Node { flex_grow: 1.0 }
             on(custom_value_changed)
             HardLimit(NumberInputRange::I32({min}..={max}))
             SoftLimit(NumberInputRange::I32({min}..={max}))

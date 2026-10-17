@@ -14,7 +14,7 @@ use bevy::text::FontSource;
 use bevy::window::{PrimaryWindow, WindowTheme};
 use bevy::feathers::{
     dark_theme::create_dark_theme,
-    theme::{ThemeProps, UiTheme},
+    theme::{InheritableThemeTextColor, ThemeProps, UiTheme},
     tokens::semantic,
 };
 use palette::Palette;
@@ -36,15 +36,6 @@ impl ThemeMode {
             "dark" => Self::Dark,
             "high-contrast" => Self::HighContrast,
             _ => Self::System,
-        }
-    }
-
-    pub fn key(self) -> &'static str {
-        match self {
-            Self::System => "system",
-            Self::Light => "light",
-            Self::Dark => "dark",
-            Self::HighContrast => "high-contrast",
         }
     }
 
@@ -108,13 +99,10 @@ pub fn ui_font() -> FontSource {
     FontSource::families(UI_FONT_FAMILIES)
 }
 
-/// The same chain, but monospaced, for the clock digits.
-pub fn ui_mono_font() -> FontSource {
-    FontSource::list([
-        FontSource::monospace(),
-        FontSource::families(UI_FONT_FAMILIES),
-    ])
-}
+/// Monotonic counter bumped every time the resolved theme is rebuilt. Systems
+/// that must run exactly once per theme change compare this against a `Local`.
+#[derive(Resource, Default, Debug)]
+pub struct ThemeRevision(pub u64);
 
 pub struct ThemePlugin;
 
@@ -130,7 +118,34 @@ impl Plugin for ThemePlugin {
         app.insert_resource(UiTheme(build_theme(&palette)))
             .insert_resource(ThemePalette(palette))
             .init_resource::<ActiveTheme>()
-            .add_systems(Update, sync_theme);
+            .init_resource::<ThemeRevision>()
+            .add_systems(
+                Update,
+                (sync_theme, repaint_inherited_text_colors).chain(),
+            );
+    }
+}
+
+/// Feathers widgets resolve [`InheritableThemeTextColor`] once, when the
+/// component is inserted, and store the result in a propagated `TextColor`.
+/// Re-insert the component whenever the theme changes so widget captions,
+/// checkbox labels, slider values and themed icons are repainted with the new
+/// palette instead of keeping the colors of the theme they were spawned under.
+fn repaint_inherited_text_colors(
+    mut commands: Commands,
+    revision: Res<ThemeRevision>,
+    mut seen: Local<u64>,
+    inherited: Query<(Entity, &InheritableThemeTextColor)>,
+) {
+    if *seen == revision.0 {
+        return;
+    }
+    *seen = revision.0;
+    for (entity, InheritableThemeTextColor(token)) in &inherited {
+        commands
+            .entity(entity)
+            .remove::<InheritableThemeTextColor>()
+            .insert(InheritableThemeTextColor(token.clone()));
     }
 }
 
@@ -142,6 +157,7 @@ fn sync_theme(
     mut active: ResMut<ActiveTheme>,
     mut palette: ResMut<ThemePalette>,
     mut ui_theme: ResMut<UiTheme>,
+    mut revision: ResMut<ThemeRevision>,
 ) {
     let Ok(mut window) = windows.single_mut() else {
         return;
@@ -174,6 +190,7 @@ fn sync_theme(
     let next = resolved.palette();
     ui_theme.0 = build_theme(&next);
     *palette = ThemePalette(next);
+    revision.0 = revision.0.wrapping_add(1);
 }
 
 /// Build Feathers theme properties from a fully resolved palette.
@@ -273,7 +290,7 @@ pub fn build_theme(palette: &Palette) -> ThemeProps {
     }
 
     // Custom Mines tokens.
-    let custom: [(_, Color); 12] = [
+    let custom: Vec<(bevy::feathers::theme::SemanticToken, Color)> = vec![
         (tokens::HEADER_BG_SEM, palette.header_bg),
         (tokens::HEADER_BORDER_SEM, palette.header_border),
         (tokens::SURFACE_BG_SEM, palette.surface_bg),
@@ -286,12 +303,63 @@ pub fn build_theme(palette: &Palette) -> ThemeProps {
         (tokens::TEXT_DANGER_SEM, palette.danger),
         (tokens::TEXT_SUCCESS_SEM, palette.success),
         (tokens::SCRIM_BG_SEM, palette.scrim),
+        (tokens::CONTROL_BORDER_SEM, palette.field_border),
+        (tokens::TAB_BG_ACTIVE_SEM, palette.accent.with_alpha(0.14)),
+        (tokens::TAB_TEXT_ACTIVE_SEM, palette.accent),
+        (tokens::SLIDER_TRACK_SEM, palette.field_border),
+        (tokens::SLIDER_FILL_SEM, palette.accent),
+        (tokens::SLIDER_FILL_HOVER_SEM, palette.accent_hover),
     ];
     for (token, color) in custom {
         theme.semantic_base.insert(token, color);
     }
 
-    let assignments: [(_, _); 12] = [
+    // Give the checkbox and select outlines enough contrast on light surfaces.
+    theme
+        .token_assignments
+        .insert(tokens::CHECKBOX_BORDER, tokens::CONTROL_BORDER_SEM);
+    theme
+        .token_assignments
+        .insert(tokens::CHECKBOX_BORDER_HOVER, tokens::CONTROL_BORDER_SEM);
+    theme
+        .token_assignments
+        .insert(tokens::CHECKBOX_BG, semantic::FILL_SOLID_DEFAULT);
+    theme
+        .token_assignments
+        .insert(tokens::CHECKBOX_BG_HOVER, semantic::FILL_SOLID_HOVER);
+    theme
+        .token_assignments
+        .insert(tokens::CHECKBOX_TEXT, semantic::TEXT_DEFAULT);
+
+    // Make slider tracks and value bars readable on the dialog surface.
+    for design in [
+        bevy::feathers::tokens::SLIDER_BG,
+        bevy::feathers::tokens::SLIDER_BG_HOVER,
+        bevy::feathers::tokens::SLIDER_BG_PRESSED,
+        bevy::feathers::tokens::SLIDER_BG_DISABLED,
+    ] {
+        theme
+            .token_assignments
+            .insert(design, tokens::SLIDER_TRACK_SEM);
+    }
+    theme.token_assignments.insert(
+        bevy::feathers::tokens::SLIDER_BAR,
+        tokens::SLIDER_FILL_SEM,
+    );
+    for design in [
+        bevy::feathers::tokens::SLIDER_BAR_HOVER,
+        bevy::feathers::tokens::SLIDER_BAR_PRESSED,
+    ] {
+        theme
+            .token_assignments
+            .insert(design, tokens::SLIDER_FILL_HOVER_SEM);
+    }
+    theme.token_assignments.insert(
+        bevy::feathers::tokens::SLIDER_BAR_DISABLED,
+        tokens::SLIDER_FILL_SEM,
+    );
+
+    let assignments: Vec<(bevy::feathers::theme::ThemeToken, bevy::feathers::theme::SemanticToken)> = vec![
         (tokens::HEADER_BG, tokens::HEADER_BG_SEM),
         (tokens::HEADER_BORDER, tokens::HEADER_BORDER_SEM),
         (tokens::SURFACE_BG, tokens::SURFACE_BG_SEM),
@@ -304,6 +372,9 @@ pub fn build_theme(palette: &Palette) -> ThemeProps {
         (tokens::TEXT_DANGER, tokens::TEXT_DANGER_SEM),
         (tokens::TEXT_SUCCESS, tokens::TEXT_SUCCESS_SEM),
         (tokens::SCRIM_BG, tokens::SCRIM_BG_SEM),
+        (tokens::CONTROL_BORDER, tokens::CONTROL_BORDER_SEM),
+        (tokens::TAB_BG_ACTIVE, tokens::TAB_BG_ACTIVE_SEM),
+        (tokens::TAB_TEXT_ACTIVE, tokens::TAB_TEXT_ACTIVE_SEM),
     ];
     for (design, semantic_token) in assignments {
         theme.token_assignments.insert(design, semantic_token);

@@ -4,8 +4,9 @@
 
 use crate::assets::GameAssets;
 use crate::state::GameSession;
-use crate::theme::{ThemePalette, tokens};
+use crate::theme::tokens;
 use crate::ui::style::{self, FONT_BODY, RADIUS_PILL, STATUS_HEIGHT};
+use bevy::feathers::display::ThemedIcon;
 use bevy::feathers::theme::{ThemeBackgroundColor, ThemeBorderColor, ThemeTextColor, ThemedText};
 use bevy::prelude::*;
 use bevy::ui::rem;
@@ -25,23 +26,13 @@ impl Plugin for StatusPlugin {
 }
 
 /// The pill-shaped counters shown under the board.
-pub fn status_bar(
-    assets: &GameAssets,
-    palette: &ThemePalette,
-    session: &GameSession,
-) -> Box<dyn SceneList> {
-    style::boxed_list(bsn_list! { @status_bar_scene(assets, palette, session) })
+pub fn status_bar(assets: &GameAssets, session: &GameSession) -> Box<dyn SceneList> {
+    style::boxed_list(bsn_list! { @status_bar_scene(assets, session) })
 }
 
-fn status_bar_scene(
-    assets: &GameAssets,
-    palette: &ThemePalette,
-    session: &GameSession,
-) -> impl Scene {
+fn status_bar_scene(assets: &GameAssets, session: &GameSession) -> impl Scene {
     let flag_icon = assets.modern.flag.clone();
     let clock_icon = assets.icons.stopwatch.clone();
-    let accent = palette.0.accent;
-    let muted = palette.0.text_secondary;
     let flags = format!("{}", session.mines_left().max(0));
     let elapsed = format_time(session.clock.elapsed().as_secs());
     bsn! {
@@ -59,7 +50,7 @@ fn status_bar_scene(
         Children [
             Node { align_items: AlignItems::Center, column_gap: rem(0.35) }
             Children [
-                @icon_fragment(flag_icon, accent, 1.0)
+                @icon_fragment(flag_icon, tokens::TEXT_ACCENT, 1.0)
                 --
                 Text({flags})
                 TextFont { font_size: FontSize::Rem(FONT_BODY) }
@@ -69,7 +60,7 @@ fn status_bar_scene(
             --
             Node { align_items: AlignItems::Center, column_gap: rem(0.35) }
             Children [
-                @icon_fragment(clock_icon, muted, 1.0)
+                @icon_fragment(clock_icon, tokens::TEXT_SECONDARY, 1.0)
                 --
                 ClockText
                 Text({elapsed})
@@ -80,10 +71,17 @@ fn status_bar_scene(
     }
 }
 
-fn icon_fragment(handle: Handle<Image>, tint: Color, size: f32) -> impl Scene {
+fn icon_fragment(
+    handle: Handle<Image>,
+    token: bevy::feathers::theme::ThemeToken,
+    size: f32,
+) -> impl Scene {
     bsn! {
-        ImageNode { image: {handle}, color: {tint} }
+        ImageNode { image: {handle} }
         Node { width: rem(size), height: rem(size) }
+        ThemedIcon
+        TextColor(Color::WHITE)
+        ThemeTextColor({token}) ThemedText
         Pickable::IGNORE
     }
 }

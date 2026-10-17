@@ -40,20 +40,6 @@ impl UiTransition {
         }
     }
 
-    pub const fn screen(enabled: bool) -> Self {
-        if enabled {
-            Self {
-                elapsed: 0.0,
-                delay: 0.0,
-                duration: 0.22,
-                from_scale: 0.99,
-                from_y: 12.0,
-                easing: Easing::CubicOut,
-            }
-        } else {
-            Self::none()
-        }
-    }
 
     pub const fn dialog(enabled: bool) -> Self {
         if enabled {
@@ -85,20 +71,6 @@ impl UiTransition {
         }
     }
 
-    pub const fn pop(enabled: bool) -> Self {
-        if enabled {
-            Self {
-                elapsed: 0.0,
-                delay: 0.0,
-                duration: 0.14,
-                from_scale: 0.8,
-                from_y: 0.0,
-                easing: Easing::BackOut,
-            }
-        } else {
-            Self::none()
-        }
-    }
 }
 
 pub struct AnimationPlugin;

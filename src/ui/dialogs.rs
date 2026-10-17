@@ -53,7 +53,7 @@ const SHORTCUTS: &str = "\
 
 小型 / 中型 / 大型     1 / 2 / 3
 自定义                 4
-移动                   方向键或 U J H K
+移动                   方向键或 H J K L
 揭开 / 清除周围        空格
 插旗                   Ctrl+空格";
 
@@ -111,18 +111,36 @@ fn sync_dialog(
 
 fn style_dialog_barrier(
     palette: Res<ThemePalette>,
-    barriers: Query<Entity, Added<ModalDialogBarrier>>,
+    all: Query<Entity, With<ModalDialogBarrier>>,
+    added: Query<Entity, Added<ModalDialogBarrier>>,
     mut commands: Commands,
 ) {
-    for entity in &barriers {
-        commands
-            .entity(entity)
-            .insert(BackgroundColor(palette.0.scrim));
+    // Refresh every barrier when the palette changes (live theme switch), and
+    // style each barrier as it spawns.
+    if palette.is_changed() {
+        for entity in &all {
+            commands
+                .entity(entity)
+                .insert(BackgroundColor(palette.0.scrim));
+        }
+    } else {
+        for entity in &added {
+            commands
+                .entity(entity)
+                .insert(BackgroundColor(palette.0.scrim));
+        }
     }
 }
 
-fn on_request_close(_close: On<RequestClose>, mut session: ResMut<GameSession>) {
-    session.close_dialog();
+fn on_request_close(
+    _close: On<RequestClose>,
+    mut session: ResMut<GameSession>,
+    mut guard: ResMut<crate::state::EscapeGuard>,
+) {
+    if session.dialog.is_some() {
+        guard.0 = 3;
+        session.close_dialog();
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -139,7 +157,7 @@ fn dialog_scene(
     let width = match kind {
         DialogKind::Settings => 600.0,
         DialogKind::Help => 620.0,
-        DialogKind::Scores => 520.0,
+        DialogKind::Scores => 560.0,
         DialogKind::Shortcuts => 500.0,
         _ => 440.0,
     };
@@ -237,6 +255,18 @@ fn dialog_contents(
             let page = session.help_page.min(HELP_PAGE_COUNT - 1);
             let (title, text) = HELP_PAGES[page];
             let counter = format!("第 {} 页，共 {} 页", page + 1, HELP_PAGE_COUNT);
+            let mut pager = Vec::new();
+            if page == 0 {
+                pager.push(style::disabled_button("上一页"));
+            } else {
+                pager.push(button("上一页", UiAction::HelpPrevious, false));
+            }
+            if page + 1 >= HELP_PAGE_COUNT {
+                pager.push(style::disabled_button("下一页"));
+            } else {
+                pager.push(button("下一页", UiAction::HelpNext, false));
+            }
+            pager.push(button("关闭", UiAction::CloseDialog, true));
             frame(
                 "扫雷帮助",
                 Box::new(bsn! {
@@ -249,11 +279,7 @@ fn dialog_contents(
                         {line(counter, FONT_CAPTION, tokens::TEXT_SECONDARY)}
                     ]
                 }),
-                footer_buttons(vec![
-                    button("上一页", UiAction::HelpPrevious, false),
-                    button("下一页", UiAction::HelpNext, false),
-                    button("关闭", UiAction::CloseDialog, true),
-                ]),
+                footer_buttons(pager),
             )
         }
         DialogKind::Shortcuts => frame(

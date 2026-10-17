@@ -30,20 +30,6 @@ pub const UI_THEMES: [(&str, &str); 4] = [
     ("high-contrast", "高对比度"),
 ];
 
-pub fn board_style_label(name: &str) -> &str {
-    BOARD_STYLES
-        .iter()
-        .find(|(key, _)| *key == name)
-        .map_or("现代", |(_, label)| label)
-}
-
-pub fn ui_theme_label(name: &str) -> &str {
-    UI_THEMES
-        .iter()
-        .find(|(key, _)| *key == name)
-        .map_or("跟随系统", |(_, label)| label)
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Reflect, Default)]
 #[reflect(Default)]
 pub enum Difficulty {

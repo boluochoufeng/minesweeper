@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-#![allow(dead_code)]
-
 #![cfg_attr(
     all(target_os = "windows", not(debug_assertions)),
     windows_subsystem = "windows"
@@ -56,6 +54,7 @@ fn main() {
         .add_plugins(FeathersPlugins)
         .init_state::<Screen>()
         .init_resource::<state::GameSession>()
+        .init_resource::<state::EscapeGuard>()
         .add_plugins((AssetsPlugin, ThemePlugin, MinesUiPlugin, InputPlugin))
         .add_systems(Startup, (spawn_camera, apply_cli_difficulty).chain())
         .run();

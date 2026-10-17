@@ -14,7 +14,6 @@ pub const GLYPH_EXPLODED: usize = 1;
 pub const GLYPH_FLAG: usize = 2;
 pub const GLYPH_INCORRECT: usize = 3;
 pub const GLYPH_MAYBE: usize = 4;
-pub const GLYPH_COUNT: usize = 5;
 
 /// Board art style selected by [`crate::storage::Settings::theme`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -64,11 +63,9 @@ pub mod legacy {
 
     pub const HIDDEN: Color = Color::srgb(0.82, 0.82, 0.82);
     pub const REVEALED: Color = Color::srgb(0.96, 0.96, 0.95);
-    pub const BOARD_BG: Color = Color::srgb(0.72, 0.72, 0.72);
     pub const BORDER_HIDDEN: Color = Color::srgb(0.66, 0.66, 0.66);
     pub const BORDER_REVEALED: Color = Color::srgb(0.78, 0.78, 0.78);
     pub const CURSOR: Color = Color::srgb(0.13, 0.45, 0.86);
-    pub const TEXT: Color = Color::srgb(0.16, 0.16, 0.18);
     pub const NUMBER_COLORS: [(u8, u8, u8); 8] = [
         (0x1a, 0x5f, 0xb4),
         (0x21, 0x8b, 0x55),
@@ -160,10 +157,6 @@ mod raw_icons {
     pub const RESTART: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><g fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.4-5.7"/><path d="M20 4v4.5h-4.5"/></g></svg>"##;
     pub const PAUSE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><g fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round"><path d="M9 5v14"/><path d="M15 5v14"/></g></svg>"##;
     pub const PLAY: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path fill="#ffffff" d="M8 4.8 20 12 8 19.2Z"/></svg>"##;
-    pub const CLOSE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><g fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12"/><path d="M18 6L6 18"/></g></svg>"##;
-    pub const SETTINGS: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><g fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round"><path d="M4 7h7"/><path d="M15 7h5"/><path d="M4 17h5"/><path d="M13 17h7"/><circle cx="13" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></g></svg>"##;
-    pub const HELP: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><g fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M9.2 9.2a2.9 2.9 0 1 1 4.1 2.6c-.8.35-1.1 1-1.1 1.9"/></g><circle cx="12" cy="17.2" r="1.2" fill="#ffffff"/></svg>"##;
-    pub const INFO: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><g fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v6"/></g><circle cx="12" cy="7.4" r="1.3" fill="#ffffff"/></svg>"##;
 
     // Modern board glyphs, drawn as white shapes for per-theme tinting.
     pub const MINE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><g stroke="#ffffff" stroke-width="1.9" stroke-linecap="round"><path d="M12 3v18"/><path d="M3 12h18"/><path d="M5.6 5.6l12.8 12.8"/><path d="M18.4 5.6L5.6 18.4"/></g><circle cx="12" cy="12" r="4.6" fill="#ffffff"/></svg>"##;
@@ -181,10 +174,6 @@ pub struct UiIcons {
     pub restart: Handle<Image>,
     pub pause: Handle<Image>,
     pub play: Handle<Image>,
-    pub close: Handle<Image>,
-    pub settings: Handle<Image>,
-    pub help: Handle<Image>,
-    pub info: Handle<Image>,
     pub stopwatch: Handle<Image>,
 }
 
@@ -265,10 +254,6 @@ fn prepare_assets(images: &mut Assets<Image>) -> GameAssets {
         restart: images.add(icon_image(raw_icons::RESTART, &options)),
         pause: images.add(icon_image(raw_icons::PAUSE, &options)),
         play: images.add(icon_image(raw_icons::PLAY, &options)),
-        close: images.add(icon_image(raw_icons::CLOSE, &options)),
-        settings: images.add(icon_image(raw_icons::SETTINGS, &options)),
-        help: images.add(icon_image(raw_icons::HELP, &options)),
-        info: images.add(icon_image(raw_icons::INFO, &options)),
         stopwatch: images.add(icon_image(raw_icons::STOPWATCH, &options)),
     };
 

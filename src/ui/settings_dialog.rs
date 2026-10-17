@@ -7,14 +7,17 @@ use crate::storage::{BOARD_STYLES, Settings, UI_THEMES};
 use crate::theme::{ThemePalette, tokens};
 use crate::ui::style::{FONT_BODY, FONT_SMALL};
 use bevy::feathers::controls::{
-    FeathersCheckbox, FeathersSelect, OptionIndex, FeathersSlider, list_rows_from_strings,
+    FeathersCheckbox, FeathersSelect, FeathersSlider, OptionIndex, list_rows_from_strings,
 };
-use bevy::feathers::theme::{ThemeBorderColor, ThemeTextColor, ThemeToken, ThemedText};
+use bevy::feathers::theme::{
+    ThemeBackgroundColor, ThemeBorderColor, ThemeTextColor, ThemeToken, ThemedText,
+};
 use bevy::prelude::*;
-use bevy::ui::{Checked, Overflow, OverflowAxis, ScrollPosition, rem};
-use bevy::ui_widgets::{SelectedTab, Tab, TabList, tablist_self_update};
-use bevy::ui_widgets::{SliderStep, SliderValue, slider_self_update};
-use bevy::ui_widgets::{ScrollArea, ValueChange, checkbox_self_update};
+use bevy::ui::{BorderColor, Checked, Overflow, OverflowAxis, ScrollPosition, Selected, rem};
+use bevy::ui_widgets::{
+    ScrollArea, SelectedTab, SliderStep, SliderValue, Tab, TabList, ValueChange,
+    checkbox_self_update, slider_self_update, tablist_self_update,
+};
 
 /// Currently selected settings tab.
 #[derive(Resource, Default, Debug)]
@@ -28,8 +31,18 @@ pub struct SettingsTab(pub usize);
 #[derive(Component, Debug, Clone, Copy, Default)]
 pub struct SettingsPanelRoot;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// The selection state a tab header was last painted for, so the styling system
+/// only touches components when something actually changed.
+#[derive(Component, Debug, Clone, Copy, Default)]
+struct TabStyling(bool);
+
+/// Right-aligned percentage label next to the UI-scale slider.
+#[derive(Component, Debug, Clone, Copy, Default)]
+struct ScaleValueText;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SettingToggle {
+    #[default]
     QuestionMarks,
     AutoClear,
     AutoFlag,
@@ -39,22 +52,11 @@ pub enum SettingToggle {
 #[derive(Component, Debug, Clone, Copy, Default)]
 pub struct SettingCheckbox(pub SettingToggle);
 
-impl Default for SettingToggle {
-    fn default() -> Self {
-        Self::QuestionMarks
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SettingSelectKind {
+    #[default]
     UiTheme,
     BoardStyle,
-}
-
-impl Default for SettingSelectKind {
-    fn default() -> Self {
-        Self::UiTheme
-    }
 }
 
 #[derive(Component, Debug, Clone, Copy, Default)]
@@ -68,7 +70,16 @@ pub struct SettingsDialogPlugin;
 impl Plugin for SettingsDialogPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<SettingsTabState>()
-            .add_systems(Update, (sync_settings_panel, style_selected_tabs))
+            .add_systems(
+                Update,
+                (
+                    init_tab_selection,
+                    sync_settings_panel,
+                    style_selected_tabs,
+                    hide_builtin_slider_text,
+                    update_scale_label,
+                ),
+            )
             .add_observer(on_checkbox_changed)
             .add_observer(on_select_changed)
             .add_observer(on_scale_changed)
@@ -76,7 +87,6 @@ impl Plugin for SettingsDialogPlugin {
     }
 }
 
-/// Dialog body for the settings dialog.
 pub fn contents(
     settings: &Settings,
     _palette: &ThemePalette,
@@ -89,13 +99,12 @@ pub fn contents(
     ];
     let panel = panel_content(tab_index, settings);
     Box::new(bsn! {
-        Node { width: percent(100), flex_direction: FlexDirection::Column, row_gap: rem(0.8) }
+        Node { width: percent(100), flex_direction: FlexDirection::Column, row_gap: rem(0.9) }
         Children [
             Node {
                 flex_direction: FlexDirection::Row,
                 column_gap: rem(0.2),
                 border: UiRect::bottom(px(1)),
-                padding: UiRect::bottom(rem(0.3)),
             }
             ThemeBorderColor(tokens::SURFACE_BORDER)
             TabList
@@ -127,9 +136,11 @@ fn tab_label(label: &str, index: usize) -> Box<dyn SceneList> {
         Tab
         SettingsTab(index)
         Node {
-            padding: UiRect::axes(rem(0.8), rem(0.3)),
-            border_radius: BorderRadius::all(rem(0.4)),
+            padding: UiRect::axes(rem(0.8), rem(0.35)),
+            border: UiRect::bottom(px(2)),
         }
+        BackgroundColor(Color::NONE)
+        BorderColor::all(Color::NONE)
         Children [
             Text({label})
             TextFont { font_size: FontSize::Rem(FONT_BODY) }
@@ -198,23 +209,24 @@ fn appearance_panel(settings: &Settings) -> Box<dyn SceneList> {
 }
 
 fn controls_panel() -> Box<dyn SceneList> {
-    column(vec![text_line(
-        "左键翻开 / 数字周围清除",
-        FONT_BODY,
-        tokens::TEXT_MAIN,
-    ), text_line(
-        "右键或长按插旗，问号标记可循环切换",
-        FONT_BODY,
-        tokens::TEXT_SECONDARY,
-    ), text_line(
-        "方向键或 U J H K 移动，空格翻开，Ctrl+空格插旗",
-        FONT_BODY,
-        tokens::TEXT_SECONDARY,
-    ), text_line(
-        "Ctrl+N 新游戏 · Ctrl+R 重新开始 · F1 帮助",
-        FONT_SMALL,
-        tokens::TEXT_SECONDARY,
-    )])
+    column(vec![
+        text_line("左键翻开 / 数字周围清除", FONT_BODY, tokens::TEXT_MAIN),
+        text_line(
+            "右键或长按插旗，问号标记可循环切换",
+            FONT_BODY,
+            tokens::TEXT_SECONDARY,
+        ),
+        text_line(
+            "方向键或 U J H K 移动，空格翻开，Ctrl+空格插旗",
+            FONT_BODY,
+            tokens::TEXT_SECONDARY,
+        ),
+        text_line(
+            "Ctrl+N 新游戏 · Ctrl+R 重新开始 · F1 帮助",
+            FONT_SMALL,
+            tokens::TEXT_SECONDARY,
+        ),
+    ])
 }
 
 fn column(rows: Vec<Box<dyn SceneList>>) -> Box<dyn SceneList> {
@@ -258,6 +270,7 @@ fn select_row(
     Box::new(bsn! {
         Node {
             width: percent(100),
+            height: rem(2.6),
             align_items: AlignItems::Center,
             justify_content: JustifyContent::SpaceBetween,
             column_gap: rem(0.8),
@@ -272,18 +285,19 @@ fn select_row(
                 @max_visible: 4,
             }
             SettingSelect({kind})
-            Node { width: rem(10.0) }
+            Node { width: rem(11.0) }
         ]
     })
 }
 
 fn slider_row(label: &str, value: f32) -> Box<dyn SceneList> {
     let label = label.to_owned();
+    let value_label = format!("{:.0}%", (value * 100.0).round());
     Box::new(bsn! {
         Node {
             width: percent(100),
+            height: rem(2.6),
             align_items: AlignItems::Center,
-            justify_content: JustifyContent::SpaceBetween,
             column_gap: rem(0.8),
         }
         Children [
@@ -298,8 +312,15 @@ fn slider_row(label: &str, value: f32) -> Box<dyn SceneList> {
             SliderValue({value})
             SliderStep(0.05)
             ScaleSlider
-            Node { width: rem(10.0) }
             on(slider_self_update)
+            --
+            Node { width: rem(3.2), justify_content: JustifyContent::End }
+            Children [
+                ScaleValueText
+                Text({value_label})
+                TextFont { font_size: FontSize::Rem(FONT_BODY) }
+                ThemeTextColor(tokens::TEXT_SECONDARY) ThemedText
+            ]
         ]
     })
 }
@@ -311,6 +332,105 @@ fn text_line(content: &str, size: f32, token: ThemeToken) -> Box<dyn SceneList> 
         TextFont { font_size: FontSize::Rem(size) }
         ThemeTextColor({token}) ThemedText
     })
+}
+
+/// Apply the initial tab selection once a settings tab strip has been spawned.
+fn init_tab_selection(
+    mut lists: Query<(&Children, &mut SelectedTab), Added<TabList>>,
+    state: Res<SettingsTabState>,
+) {
+    for (children, mut selected) in &mut lists {
+        if selected.0.is_some() {
+            continue;
+        }
+        if let Some(tab) = children.get(state.index) {
+            selected.0 = Some(*tab);
+        }
+    }
+}
+
+/// Paint the selected tab with a tinted background and an accent underline.
+#[allow(clippy::type_complexity)]
+fn style_selected_tabs(
+    mut commands: Commands,
+    mut tabs: Query<
+        (
+            Entity,
+            Has<Selected>,
+            &Children,
+            Option<&TabStyling>,
+            &mut BackgroundColor,
+            &mut BorderColor,
+        ),
+        With<SettingsTab>,
+    >,
+    texts: Query<(), With<Text>>,
+) {
+    for (entity, selected, children, styling, mut background, mut border) in &mut tabs {
+        if styling.map(|styling| styling.0) == Some(selected) {
+            continue;
+        }
+        if selected {
+            commands.entity(entity).insert((
+                ThemeBackgroundColor(tokens::TAB_BG_ACTIVE),
+                ThemeBorderColor(tokens::TEXT_ACCENT),
+                TabStyling(true),
+            ));
+        } else {
+            commands.entity(entity).remove::<ThemeBackgroundColor>();
+            commands.entity(entity).remove::<ThemeBorderColor>();
+            commands.entity(entity).insert(TabStyling(false));
+            background.0 = Color::NONE;
+            border.top = Color::NONE;
+            border.right = Color::NONE;
+            border.bottom = Color::NONE;
+            border.left = Color::NONE;
+        }
+        for child in children.iter() {
+            if texts.get(child).is_err() {
+                continue;
+            }
+            let token = if selected {
+                tokens::TAB_TEXT_ACTIVE
+            } else {
+                tokens::TEXT_MAIN
+            };
+            commands.entity(child).insert(ThemeTextColor(token));
+        }
+    }
+}
+
+/// Feathers draws the slider value centered inside the track, which collides
+/// with the filled portion. Hide it and rely on the dedicated label instead.
+fn hide_builtin_slider_text(
+    mut commands: Commands,
+    sliders: Query<&Children, Added<FeathersSlider>>,
+    children: Query<&Children>,
+    texts: Query<Entity, With<Text>>,
+) {
+    for slider_children in &sliders {
+        let mut stack: Vec<Entity> = slider_children.iter().collect();
+        while let Some(entity) = stack.pop() {
+            if texts.get(entity).is_ok() {
+                commands.entity(entity).insert(Visibility::Hidden);
+            }
+            if let Ok(kids) = children.get(entity) {
+                stack.extend(kids.iter());
+            }
+        }
+    }
+}
+
+fn update_scale_label(settings: Res<Settings>, mut labels: Query<&mut Text, With<ScaleValueText>>) {
+    if !settings.is_changed() {
+        return;
+    }
+    let label = format!("{:.0}%", settings.ui_scale_factor() * 100.0);
+    for mut text in &mut labels {
+        if text.0 != label {
+            text.0 = label.clone();
+        }
+    }
 }
 
 fn on_checkbox_changed(
@@ -399,11 +519,4 @@ fn sync_settings_panel(
             .entity(panel)
             .queue_spawn_related_scenes::<Children>(content);
     }
-}
-
-fn style_selected_tabs(
-    tabs: Query<(Entity, Has<bevy::ui::Selected>), With<SettingsTab>>,
-    mut commands: Commands,
-) {
-    let _ = (&tabs, &mut commands);
 }

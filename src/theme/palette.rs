@@ -19,7 +19,6 @@ pub struct Palette {
     pub surface_alt: Color,
     pub dialog_bg: Color,
     pub scrim: Color,
-    pub shadow: Color,
 
     pub text_primary: Color,
     pub text_secondary: Color,
@@ -31,10 +30,7 @@ pub struct Palette {
     pub on_accent: Color,
 
     pub danger: Color,
-    pub danger_bg: Color,
     pub success: Color,
-    pub success_bg: Color,
-    pub warning: Color,
 
     pub control_bg: Color,
     pub control_bg_hover: Color,
@@ -45,8 +41,6 @@ pub struct Palette {
     pub focus_ring: Color,
 
     pub cell_hidden: Color,
-    pub cell_hidden_hover: Color,
-    pub cell_hidden_pressed: Color,
     pub cell_revealed: Color,
     pub cell_border: Color,
     pub cell_cursor: Color,
@@ -70,7 +64,6 @@ impl Palette {
             surface_alt: Color::srgb(0.945, 0.953, 0.965),
             dialog_bg: Color::WHITE,
             scrim: Color::srgba(0.059, 0.067, 0.086, 0.45),
-            shadow: Color::srgba(0.059, 0.090, 0.165, 0.10),
 
             text_primary: Color::srgb(0.078, 0.094, 0.129),
             text_secondary: Color::srgb(0.357, 0.392, 0.447),
@@ -82,10 +75,7 @@ impl Palette {
             on_accent: Color::WHITE,
 
             danger: Color::srgb(0.937, 0.267, 0.267),
-            danger_bg: Color::srgb(0.992, 0.886, 0.882),
             success: Color::srgb(0.063, 0.725, 0.506),
-            success_bg: Color::srgb(0.878, 0.973, 0.941),
-            warning: Color::srgb(0.961, 0.620, 0.043),
 
             control_bg: Color::srgb(0.925, 0.937, 0.953),
             control_bg_hover: Color::srgb(0.878, 0.898, 0.925),
@@ -96,8 +86,6 @@ impl Palette {
             focus_ring: Color::srgba(0.231, 0.510, 0.965, 0.55),
 
             cell_hidden: Color::srgb(0.894, 0.918, 0.949),
-            cell_hidden_hover: Color::srgb(0.839, 0.871, 0.914),
-            cell_hidden_pressed: Color::srgb(0.776, 0.820, 0.878),
             cell_revealed: Color::srgb(0.984, 0.988, 0.996),
             cell_border: Color::srgb(0.843, 0.867, 0.902),
             cell_cursor: Color::srgb(0.231, 0.510, 0.965),
@@ -111,7 +99,7 @@ impl Palette {
                 Color::srgb(0.706, 0.325, 0.035),
                 Color::srgb(0.031, 0.569, 0.698),
                 Color::srgb(0.745, 0.094, 0.365),
-                Color::srgb(0.216, 0.255, 0.318),
+                Color::srgb_u8(55, 65, 81),
             ],
             pill_bg: Color::WHITE,
             pill_border: Color::srgb(0.886, 0.902, 0.925),
@@ -129,7 +117,6 @@ impl Palette {
             surface_alt: Color::srgb(0.106, 0.125, 0.165),
             dialog_bg: Color::srgb(0.106, 0.125, 0.165),
             scrim: Color::srgba(0.0, 0.0, 0.0, 0.60),
-            shadow: Color::srgba(0.0, 0.0, 0.0, 0.50),
 
             text_primary: Color::srgb(0.902, 0.914, 0.937),
             text_secondary: Color::srgb(0.604, 0.639, 0.698),
@@ -141,22 +128,17 @@ impl Palette {
             on_accent: Color::srgb(0.059, 0.067, 0.086),
 
             danger: Color::srgb(0.973, 0.443, 0.443),
-            danger_bg: Color::srgb(0.290, 0.114, 0.122),
             success: Color::srgb(0.204, 0.827, 0.600),
-            success_bg: Color::srgb(0.071, 0.235, 0.188),
-            warning: Color::srgb(0.984, 0.749, 0.141),
 
             control_bg: Color::srgb(0.149, 0.176, 0.220),
             control_bg_hover: Color::srgb(0.184, 0.216, 0.275),
             control_bg_pressed: Color::srgb(0.220, 0.255, 0.325),
             control_bg_disabled: Color::srgba(0.149, 0.176, 0.220, 0.55),
             field_bg: Color::srgb(0.118, 0.141, 0.180),
-            field_border: Color::srgb(0.220, 0.251, 0.318),
+            field_border: Color::srgb_u8(56, 64, 81),
             focus_ring: Color::srgba(0.376, 0.647, 0.980, 0.65),
 
             cell_hidden: Color::srgb(0.141, 0.165, 0.212),
-            cell_hidden_hover: Color::srgb(0.180, 0.208, 0.275),
-            cell_hidden_pressed: Color::srgb(0.220, 0.251, 0.333),
             cell_revealed: Color::srgb(0.106, 0.125, 0.165),
             cell_border: Color::srgb(0.200, 0.227, 0.294),
             cell_cursor: Color::srgb(0.376, 0.647, 0.980),
@@ -188,7 +170,6 @@ impl Palette {
             surface_alt: Color::WHITE,
             dialog_bg: Color::WHITE,
             scrim: Color::srgba(0.0, 0.0, 0.0, 0.75),
-            shadow: Color::srgba(0.0, 0.0, 0.0, 0.0),
 
             text_primary: Color::BLACK,
             text_secondary: Color::BLACK,
@@ -200,22 +181,17 @@ impl Palette {
             on_accent: Color::WHITE,
 
             danger: Color::srgb(0.690, 0.0, 0.125),
-            danger_bg: Color::srgb(1.0, 0.898, 0.898),
             success: Color::srgb(0.0, 0.392, 0.0),
-            success_bg: Color::srgb(0.898, 1.0, 0.898),
-            warning: Color::srgb(0.6, 0.35, 0.0),
 
-            control_bg: Color::WHITE,
-            control_bg_hover: Color::srgb(0.9, 0.9, 0.9),
-            control_bg_pressed: Color::srgb(0.8, 0.8, 0.8),
-            control_bg_disabled: Color::WHITE,
-            field_bg: Color::WHITE,
+            control_bg: Color::srgb(0.901, 0.901, 0.901),
+            control_bg_hover: Color::srgb(0.824, 0.824, 0.824),
+            control_bg_pressed: Color::srgb(0.729, 0.729, 0.729),
+            control_bg_disabled: Color::srgb(0.949, 0.949, 0.949),
+            field_bg: Color::srgb(0.901, 0.901, 0.901),
             field_border: Color::BLACK,
             focus_ring: Color::srgb(0.0, 0.0, 0.933),
 
             cell_hidden: Color::WHITE,
-            cell_hidden_hover: Color::srgb(0.9, 0.9, 0.9),
-            cell_hidden_pressed: Color::srgb(0.8, 0.8, 0.8),
             cell_revealed: Color::WHITE,
             cell_border: Color::BLACK,
             cell_cursor: Color::srgb(0.0, 0.0, 0.933),

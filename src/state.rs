@@ -54,6 +54,11 @@ pub enum CellAction {
     Chord(usize, usize),
 }
 
+/// Prevents the Escape key that closed a dialog from also reaching the game
+/// shortcuts in the same frame.
+#[derive(Resource, Default)]
+pub struct EscapeGuard(pub u8);
+
 /// The live game: board, clock, pause state and the keyboard cursor.
 #[derive(Resource, Default)]
 pub struct GameSession {
@@ -69,10 +74,6 @@ pub struct GameSession {
 }
 
 impl GameSession {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// Start a fresh game on the given difficulty and switch to the board.
     pub fn start_game(
         &mut self,
@@ -175,6 +176,7 @@ impl GameSession {
     }
 
     pub fn toggle_pause(&mut self) {
+
         if self.clock.has_started() {
             self.set_paused(!self.paused, true);
         }
@@ -257,26 +259,10 @@ impl GameSession {
         if board.outcome != Outcome::Won || matches!(self.dialog, Some(DialogKind::Victory)) {
             return false;
         }
-        let seconds = self.clock.elapsed().as_secs_f64().round() as u64;
+        let seconds = self.clock.elapsed().as_secs();
         scores.add(board.width, board.height, board.mine_count, seconds);
         self.dialog = Some(DialogKind::Victory);
         true
-    }
-
-    /// Board progress in per-mille, used by the status bar.
-    pub fn progress(&self) -> f32 {
-        let Some(board) = self.board.as_ref() else {
-            return 0.0;
-        };
-        let total = board.width * board.height;
-        if total == 0 {
-            return 0.0;
-        }
-        let safe = total.saturating_sub(board.mine_count);
-        if safe == 0 {
-            return 0.0;
-        }
-        (board.revealed_count.min(safe) as f32) / (safe as f32)
     }
 
     pub fn mines_left(&self) -> i64 {
@@ -286,3 +272,4 @@ impl GameSession {
         board.mine_count as i64 - board.flag_count as i64
     }
 }
+

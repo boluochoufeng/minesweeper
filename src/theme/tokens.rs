@@ -91,3 +91,33 @@ token_pair!(
     "mines.scrim.bg",
     "Dialog backdrop scrim."
 );
+token_pair!(
+    CONTROL_BORDER,
+    CONTROL_BORDER_SEM,
+    "mines.control.border",
+    "Border of input fields, selects and checkboxes."
+);
+token_pair!(
+    TAB_BG_ACTIVE,
+    TAB_BG_ACTIVE_SEM,
+    "mines.tab.bg.active",
+    "Background of the selected tab."
+);
+token_pair!(
+    TAB_TEXT_ACTIVE,
+    TAB_TEXT_ACTIVE_SEM,
+    "mines.tab.text.active",
+    "Label color of the selected tab."
+);
+
+// Feathers paints sliders as a full-row gradient: the value section uses
+// `SLIDER_BAR`, the remaining track uses `SLIDER_BG`. The stock assignments map
+// those to field/accent fills which are nearly invisible on our dialog
+// surfaces, so they are remapped to the two tokens below.
+
+/// Unfilled remainder of a slider track.
+pub const SLIDER_TRACK_SEM: SemanticToken = SemanticToken::new_static("mines.slider.track");
+/// Filled value portion of a slider.
+pub const SLIDER_FILL_SEM: SemanticToken = SemanticToken::new_static("mines.slider.fill");
+/// Filled value portion of a slider while hovered.
+pub const SLIDER_FILL_HOVER_SEM: SemanticToken = SemanticToken::new_static("mines.slider.fill.hover");

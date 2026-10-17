@@ -2,7 +2,7 @@
 //
 // Keyboard shortcuts for game flow and the keyboard cursor.
 
-use crate::state::{CellAction, DialogKind, GameSession, PendingAction, Screen};
+use crate::state::{CellAction, DialogKind, EscapeGuard, GameSession, PendingAction, Screen};
 use crate::storage::{Scores, Settings, save_progress};
 use bevy::app::AppExit;
 use bevy::input_focus::InputFocus;
@@ -29,13 +29,22 @@ fn keyboard_shortcuts(
     mut scores: ResMut<Scores>,
     mut next: ResMut<NextState<Screen>>,
     mut commands: Commands,
+    mut escape_guard: ResMut<EscapeGuard>,
 ) {
     if focus.get().is_some_and(|entity| editable.contains(entity)) {
         return;
     }
-    // Open dialogs own their input (Escape is handled by the modal barrier).
+    // Open dialogs own their input. Escape mirrors the modal barrier's close
+    // gesture so dialogs can always be dismissed from the keyboard.
     if session.dialog.is_some() {
+        if keyboard.just_pressed(KeyCode::Escape) {
+            escape_guard.0 = 3;
+            session.close_dialog();
+        }
         return;
+    }
+    if escape_guard.0 > 0 {
+        escape_guard.0 -= 1;
     }
     let ctrl = keyboard.pressed(KeyCode::ControlLeft) || keyboard.pressed(KeyCode::ControlRight);
 
@@ -70,10 +79,14 @@ fn keyboard_shortcuts(
         return;
     }
     if keyboard.just_pressed(KeyCode::Escape) {
+        if escape_guard.0 > 0 {
+            escape_guard.0 = 0;
+            return;
+        }
         match *screen.get() {
-            Screen::Playing => {
-                session.request(PendingAction::ShowNewGame, &mut settings, &mut next);
-            }
+            // Escape plays the pause toggle role on the board; starting a new
+            // game stays behind Ctrl+N so a stray key cannot discard progress.
+            Screen::Playing => session.toggle_pause(),
             Screen::CustomBoard => session.show_new_game(&mut next),
             Screen::NewGame => {}
         }
@@ -85,8 +98,27 @@ fn keyboard_shortcuts(
     if ctrl && keyboard.just_pressed(KeyCode::KeyR) {
         session.request(PendingAction::Restart, &mut settings, &mut next);
     }
-    if keyboard.just_pressed(KeyCode::Pause) {
+    if keyboard.just_pressed(KeyCode::Pause) || keyboard.just_pressed(KeyCode::KeyP) {
         session.toggle_pause();
+    }
+    // Development helper: reveal every safe cell so the victory flow can be
+    // exercised without playing a whole board. `cfg!(...)` would still compile
+    // the body in release builds, where the method does not exist.
+    #[cfg(debug_assertions)]
+    if keyboard.just_pressed(KeyCode::F9) {
+        if let Some(board) = session.board.as_mut() {
+            board.debug_reveal_all();
+        }
+        session.process_outcome(&mut scores);
+        // A real win freezes the clock; keep the shortcut faithful to it.
+        if session
+            .board
+            .as_ref()
+            .is_some_and(|board| board.outcome == crate::game::Outcome::Won)
+        {
+            session.clock.pause();
+        }
+        return;
     }
     for (key, difficulty) in [
         (KeyCode::Digit1, crate::storage::Difficulty::Small),
@@ -150,3 +182,5 @@ fn keyboard_shortcuts(
         session.process_outcome(&mut scores);
     }
 }
+
+

@@ -8,7 +8,9 @@ use crate::theme::ui_font;
 use bevy::prelude::*;
 use bevy::settings::{SaveSettingsDeferred, SaveSettingsSync};
 use bevy::text::{FontSource, RemSize};
-use bevy::window::{PrimaryWindow, WindowCloseRequested, WindowFocused};
+use bevy::window::{
+    PrimaryWindow, WindowCloseRequested, WindowFocused, WindowResizeConstraints,
+};
 use std::time::Duration;
 use winit::window::Icon;
 
@@ -127,11 +129,24 @@ fn close_and_save(
     }
 }
 
+/// Minimum window size (logical px) needed by the redesigned layouts: the
+/// difficulty picker wraps to a single column below ~660 px and the board
+/// screen can no longer fit a 16 × 16 grid.
+const MIN_WINDOW_WIDTH: f32 = 700.0;
+const MIN_WINDOW_HEIGHT: f32 = 600.0;
+
 pub fn apply_window_settings(mut window: Single<&mut Window>, settings: Res<Settings>) {
     window.resolution.set(
-        settings.window_width.max(560.0),
-        settings.window_height.max(520.0),
+        settings.window_width.max(MIN_WINDOW_WIDTH),
+        settings.window_height.max(MIN_WINDOW_HEIGHT),
     );
+    // Clamp live drags as well: below this the header and the board cannot keep
+    // their minimum cell size.
+    window.resize_constraints = WindowResizeConstraints {
+        min_width: MIN_WINDOW_WIDTH,
+        min_height: MIN_WINDOW_HEIGHT,
+        ..default()
+    };
 }
 
 /// Keep the native window icon and maximized state in sync and remember the
@@ -181,6 +196,22 @@ pub fn native_window_sync(world: &mut World) {
     };
     let width = window.resolution.width();
     let height = window.resolution.height();
+    // Native constraints are only honoured by interactive resizing, so clamp
+    // programmatic resizes here as well: below this the difficulty picker and
+    // the large board get clipped. Minimized windows report a near-zero size,
+    // which must not be "corrected".
+    let smaller_than_minimum = width > 1.0
+        && height > 1.0
+        && (width < MIN_WINDOW_WIDTH || height < MIN_WINDOW_HEIGHT);
+    if smaller_than_minimum {
+        if let Some(mut window) = world.get_mut::<Window>(window_entity) {
+            window.resolution.set(
+                width.max(MIN_WINDOW_WIDTH),
+                height.max(MIN_WINDOW_HEIGHT),
+            );
+        }
+        return;
+    }
     let maximized = bevy::winit::WINIT_WINDOWS.with_borrow(|windows| {
         windows
             .get_window(window_entity)

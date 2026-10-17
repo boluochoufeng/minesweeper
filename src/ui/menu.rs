@@ -4,17 +4,19 @@
 // to an icon button, so it needs no separate dialog state.
 
 use crate::state::{DialogKind, PendingAction};
-use crate::theme::{tokens, ThemePalette};
+use crate::theme::tokens;
 use crate::ui::actions::{ActionTarget, UiAction};
 use crate::ui::style::{self, FONT_BODY, FONT_CAPTION, FONT_TITLE, HEADER_HEIGHT};
 use crate::assets::GameAssets;
 use bevy::feathers::controls::{
-    ButtonVariant, FeathersMenu, FeathersMenuButton, FeathersMenuDivider, FeathersMenuItem,
+    FeathersMenu, FeathersMenuButton, FeathersMenuDivider, FeathersMenuItem,
     FeathersMenuPopup,
 };
+use bevy::feathers::display::ThemedIcon;
 use bevy::feathers::theme::{ThemeBackgroundColor, ThemeBorderColor, ThemeTextColor, ThemedText};
 use bevy::prelude::*;
 use bevy::ui::rem;
+use bevy::ui_widgets::popover::{Popover, PopoverAlign, PopoverPlacement, PopoverSide};
 
 pub struct MenuPlugin;
 
@@ -29,7 +31,6 @@ pub fn header(
     leading: Vec<Box<dyn SceneList>>,
     trailing: Vec<Box<dyn SceneList>>,
     assets: &GameAssets,
-    palette: &ThemePalette,
 ) -> Box<dyn SceneList> {
     let title_block = title_column(title, subtitle);
     let left = bsn_list! {
@@ -45,7 +46,7 @@ pub fn header(
         Children [
             {trailing}
             --
-            {menu_button(assets, palette)}
+            {menu_button(assets)}
         ]
     };
     Box::new(bsn! {
@@ -90,17 +91,17 @@ fn title_column(title: String, subtitle: Option<String>) -> Box<dyn SceneList> {
 }
 
 /// The icon button that opens the application menu.
-pub fn menu_button(assets: &GameAssets, palette: &ThemePalette) -> Box<dyn SceneList> {
+pub fn menu_button(assets: &GameAssets) -> Box<dyn SceneList> {
     let icon = assets.icons.menu.clone();
-    let tint = palette.0.text_primary;
     let popup = menu_popup();
     style::boxed_list(bsn_list! {
         @FeathersMenu
         Children [
             @FeathersMenuButton {
                 @caption: bsn! {
-                    ImageNode { image: {icon}, color: {tint} }
+                    ImageNode { image: {icon} }
                     Node { width: rem(1.0), height: rem(1.0) }
+                    ThemedIcon
                 },
                 @arrow: false,
             }
@@ -122,6 +123,21 @@ fn menu_popup() -> Box<dyn SceneList> {
     let quit = menu_item("退出", UiAction::Quit);
     Box::new(bsn! {
         @FeathersMenuPopup
+        Popover {
+            positions: vec![
+                PopoverPlacement {
+                    side: PopoverSide::Bottom,
+                    align: PopoverAlign::End,
+                    gap: 2.0,
+                },
+                PopoverPlacement {
+                    side: PopoverSide::Top,
+                    align: PopoverAlign::End,
+                    gap: 2.0,
+                },
+            ],
+            window_margin: 10.0,
+        }
         Children [
             {new_game}
             --
@@ -166,7 +182,4 @@ fn menu_divider() -> Box<dyn SceneList> {
     Box::new(bsn! { @FeathersMenuDivider })
 }
 
-/// Small text button used in headers (plain variant).
-pub fn header_text_button(label: &str, action: UiAction) -> Box<dyn SceneList> {
-    style::text_button(label, action, ButtonVariant::Plain)
-}
+

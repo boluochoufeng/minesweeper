@@ -5,12 +5,14 @@
 use crate::assets::GameAssets;
 use crate::state::{PendingAction, Screen};
 use crate::storage::Difficulty;
-use crate::theme::{tokens, ThemePalette};
+use crate::theme::tokens;
 use crate::ui::actions::{ActionTarget, UiAction};
 use crate::ui::menu;
 use crate::ui::style::{FONT_CAPTION, FONT_DISPLAY, FONT_SUBTITLE};
 use bevy::feathers::controls::{ButtonVariant, FeathersButton};
-use bevy::feathers::theme::{ThemeBackgroundColor, ThemeTextColor, ThemedText};
+use bevy::feathers::theme::{
+    ThemeBackgroundColor, ThemeBorderColor, ThemeTextColor, ThemedText,
+};
 use bevy::prelude::*;
 use bevy::state::state_scoped::DespawnOnExit;
 use bevy::ui::rem;
@@ -23,20 +25,13 @@ impl Plugin for NewGameScreenPlugin {
     }
 }
 
-fn spawn_new_game(mut commands: Commands, assets: Res<GameAssets>, palette: Res<ThemePalette>) {
-    let mut entity = commands.spawn_scene(new_game_screen(&assets, &palette));
+fn spawn_new_game(mut commands: Commands, assets: Res<GameAssets>) {
+    let mut entity = commands.spawn_scene(new_game_screen(&assets));
     entity.insert(DespawnOnExit(Screen::NewGame));
 }
 
-fn new_game_screen(assets: &GameAssets, palette: &ThemePalette) -> impl Scene {
-    let header = menu::header(
-        "扫雷".to_owned(),
-        None,
-        Vec::new(),
-        Vec::new(),
-        assets,
-        palette,
-    );
+fn new_game_screen(assets: &GameAssets) -> impl Scene {
+    let header = menu::header("扫雷".to_owned(), None, Vec::new(), Vec::new(), assets);
     let cards: Vec<Box<dyn SceneList>> = vec![
         difficulty_card(
             "8 × 8",
@@ -116,6 +111,12 @@ fn difficulty_card(title: &str, subtitle: &str, action: UiAction) -> Box<dyn Sce
             @variant: ButtonVariant::Normal,
         }
         ActionTarget { action: {action} }
-        Node { width: rem(13.0), height: rem(7.0), margin: rem(0.3) }
+        Node {
+            width: rem(13.0),
+            height: rem(7.0),
+            margin: rem(0.3),
+            border: px(1),
+        }
+        ThemeBorderColor(tokens::CONTROL_BORDER)
     })
 }
