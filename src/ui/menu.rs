@@ -1,0 +1,184 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Header bar and the application menu. The menu is a Feathers popover attached
+// to an icon button, so it needs no separate dialog state.
+
+use crate::assets::GameAssets;
+use crate::state::{DialogKind, PendingAction};
+use crate::theme::tokens;
+use crate::ui::actions::{ActionTarget, UiAction};
+use crate::ui::style::{self, FONT_BODY, FONT_CAPTION, FONT_TITLE, HEADER_HEIGHT};
+use bevy::feathers::controls::{
+    FeathersMenu, FeathersMenuButton, FeathersMenuDivider, FeathersMenuItem, FeathersMenuPopup,
+};
+use bevy::feathers::display::ThemedIcon;
+use bevy::feathers::theme::{ThemeBackgroundColor, ThemeBorderColor, ThemeTextColor, ThemedText};
+use bevy::prelude::*;
+use bevy::ui::rem;
+use bevy::ui_widgets::popover::{Popover, PopoverAlign, PopoverPlacement, PopoverSide};
+
+pub struct MenuPlugin;
+
+impl Plugin for MenuPlugin {
+    fn build(&self, _app: &mut App) {}
+}
+
+/// Header bar shared by every screen.
+pub fn header(
+    title: String,
+    subtitle: Option<String>,
+    leading: Vec<Box<dyn SceneList>>,
+    trailing: Vec<Box<dyn SceneList>>,
+    assets: &GameAssets,
+) -> Box<dyn SceneList> {
+    let title_block = title_column(title, subtitle);
+    let left = bsn_list! {
+        Node { flex_direction: FlexDirection::Row, align_items: AlignItems::Center, column_gap: rem(0.5) }
+        Children [
+            {leading}
+            --
+            {title_block}
+        ]
+    };
+    let right = bsn_list! {
+        Node { flex_direction: FlexDirection::Row, align_items: AlignItems::Center, column_gap: rem(0.2) }
+        Children [
+            {trailing}
+            --
+            {menu_button(assets)}
+        ]
+    };
+    Box::new(bsn! {
+        Node {
+            width: percent(100),
+            height: rem(HEADER_HEIGHT),
+            flex_shrink: 0.0,
+            padding: UiRect::axes(rem(0.9), rem(0.3)),
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::SpaceBetween,
+            border: UiRect::bottom(px(1)),
+        }
+        ThemeBackgroundColor(tokens::HEADER_BG)
+        ThemeBorderColor(tokens::HEADER_BORDER)
+        Children [ {left} -- {right} ]
+    })
+}
+
+fn title_column(title: String, subtitle: Option<String>) -> Box<dyn SceneList> {
+    let subtitle_node: Box<dyn SceneList> = match subtitle {
+        Some(subtitle) => Box::new(bsn! {
+            Text({subtitle})
+            TextFont { font_size: FontSize::Rem(FONT_CAPTION) }
+            ThemeTextColor(tokens::TEXT_SECONDARY) ThemedText
+        }),
+        None => Box::new(bsn_list! {}),
+    };
+    Box::new(bsn! {
+        Node {
+            flex_direction: FlexDirection::Column,
+            justify_content: JustifyContent::Center,
+            row_gap: rem(0.02),
+        }
+        Children [
+            Text({title})
+            TextFont { font_size: FontSize::Rem(FONT_TITLE) }
+            ThemeTextColor(tokens::TEXT_MAIN) ThemedText
+            --
+            {subtitle_node}
+        ]
+    })
+}
+
+/// The icon button that opens the application menu.
+pub fn menu_button(assets: &GameAssets) -> Box<dyn SceneList> {
+    let icon = assets.icons.menu.clone();
+    let popup = menu_popup();
+    style::boxed_list(bsn_list! {
+        @FeathersMenu
+        Children [
+            @FeathersMenuButton {
+                @caption: bsn! {
+                    ImageNode { image: {icon} }
+                    Node { width: rem(1.0), height: rem(1.0) }
+                    ThemedIcon
+                },
+                @arrow: false,
+            }
+            AccessibleLabel("菜单")
+            --
+            {popup}
+        ]
+    })
+}
+
+fn menu_popup() -> Box<dyn SceneList> {
+    let new_game = menu_item("新游戏", UiAction::Pending(PendingAction::ShowNewGame));
+    let restart = menu_item("重新开始", UiAction::Pending(PendingAction::Restart));
+    let settings = menu_item("设置", UiAction::Open(DialogKind::Settings));
+    let scores = menu_item("成绩", UiAction::Open(DialogKind::Scores));
+    let help = menu_item("帮助", UiAction::Open(DialogKind::Help));
+    let shortcuts = menu_item("键盘快捷键", UiAction::Open(DialogKind::Shortcuts));
+    let about = menu_item("关于扫雷", UiAction::Open(DialogKind::About));
+    let quit = menu_item("退出", UiAction::Quit);
+    Box::new(bsn! {
+        @FeathersMenuPopup
+        Popover {
+            positions: vec![
+                PopoverPlacement {
+                    side: PopoverSide::Bottom,
+                    align: PopoverAlign::End,
+                    gap: 2.0,
+                },
+                PopoverPlacement {
+                    side: PopoverSide::Top,
+                    align: PopoverAlign::End,
+                    gap: 2.0,
+                },
+            ],
+            window_margin: 10.0,
+        }
+        Children [
+            {new_game}
+            --
+            {restart}
+            --
+            {menu_divider()}
+            --
+            {settings}
+            --
+            {scores}
+            --
+            {menu_divider()}
+            --
+            {help}
+            --
+            {shortcuts}
+            --
+            {about}
+            --
+            {menu_divider()}
+            --
+            {quit}
+        ]
+    })
+}
+
+fn menu_item(label: &str, action: UiAction) -> Box<dyn SceneList> {
+    let caption = label.to_owned();
+    let accessible = label.to_owned();
+    Box::new(bsn! {
+        @FeathersMenuItem {
+            @caption: bsn! {
+                Text({caption})
+                TextFont { font_size: FontSize::Rem(FONT_BODY) }
+                ThemedText
+            },
+        }
+        ActionTarget { action: {action} }
+        AccessibleLabel({accessible})
+    })
+}
+
+fn menu_divider() -> Box<dyn SceneList> {
+    Box::new(bsn! { @FeathersMenuDivider })
+}

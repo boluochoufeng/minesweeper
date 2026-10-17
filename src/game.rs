@@ -308,6 +308,29 @@ impl Board {
         }
     }
 
+    /// Development helper used by the debug cheat key: reveal every safe cell and
+    /// evaluate the win condition so the victory flow can be exercised quickly.
+    #[cfg(debug_assertions)]
+    pub fn debug_reveal_all(&mut self) {
+        if !self.placed {
+            let mut rng = rand::rng();
+            self.place_mines(0, 0, &mut rng);
+        }
+        for cell in self.cells.iter_mut() {
+            if !cell.mine {
+                cell.revealed = true;
+                cell.mark = Mark::None;
+            }
+        }
+        self.revealed_count = self.cells.iter().filter(|cell| cell.revealed).count();
+        self.flag_count = self
+            .cells
+            .iter()
+            .filter(|cell| cell.mark == Mark::Flag)
+            .count();
+        self.check_win();
+    }
+
     fn check_win(&mut self) {
         if self.outcome == Outcome::InProgress
             && self.revealed_count == self.width * self.height - self.mine_count
