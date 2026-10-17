@@ -1,41 +1,51 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#![allow(dead_code)]
+
 #![cfg_attr(
     all(target_os = "windows", not(debug_assertions)),
     windows_subsystem = "windows"
 )]
 
+mod assets;
 mod game;
+mod input;
+mod state;
 mod storage;
+mod theme;
 mod ui;
 
+use bevy::feathers::FeathersPlugins;
 use bevy::prelude::*;
 use bevy::settings::SettingsPlugin;
 use bevy::window::{ExitCondition, WindowResolution};
-use storage::{Difficulty, PersistentData, Settings};
-use ui::{
-    MinesApp, NativeWindowState, animate_ui_transitions, apply_window_settings, close_and_save,
-    feathers_plugins, initialize_number_inputs, keyboard_shortcuts, mines_theme,
-    native_ui_observers, native_window_sync, rebuild_ui, schedule_settings_save, setup_assets,
-    startup_scene, sync_setting_widgets, update_clock_text, use_system_ui_font, window_focus_pause,
-    window_resize_layout,
-};
+use assets::AssetsPlugin;
+use input::InputPlugin;
+use state::{GameSession, Screen};
+use storage::{Difficulty, PersistentData, Scores, Settings};
+use theme::ThemePlugin;
+use ui::MinesUiPlugin;
+
+/// Difficulty requested on the command line, applied after startup.
+#[derive(Resource, Default)]
+struct CliDifficulty(Option<Difficulty>);
 
 fn main() {
-    let cli_difficulty = parse_cli();
     let persistent = PersistentData::load();
     let legacy_settings = persistent.settings.clone();
+    let cli_difficulty = parse_cli();
 
-    let mut app = App::new();
-    app.register_type::<Difficulty>()
+    App::new()
+        .register_type::<Difficulty>()
         .register_type::<Settings>()
         .insert_resource(legacy_settings)
-        .insert_resource(ClearColor(Color::srgb(0.965, 0.961, 0.949)))
+        .insert_resource(Scores(persistent.scores.clone()))
+        .insert_resource(CliDifficulty(cli_difficulty))
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "扫雷".to_owned(),
                 name: Some("org.gnome.Mines".to_owned()),
-                resolution: WindowResolution::new(600, 600),
+                resolution: WindowResolution::new(720, 760),
                 resizable: true,
                 ..default()
             }),
@@ -43,40 +53,27 @@ fn main() {
             ..default()
         }))
         .add_plugins(SettingsPlugin::new("org.gnome.Mines"))
-        .add_plugins(feathers_plugins())
-        .add_plugins(native_ui_observers)
-        .insert_resource(mines_theme());
-
-    let mut settings = app.world().resource::<Settings>().clone();
-    let mines = MinesApp::new(persistent, cli_difficulty, &mut settings);
-    app.insert_resource(settings)
-        .insert_resource(mines)
-        .init_resource::<NativeWindowState>()
-        .init_resource::<ui::UiRuntime>()
-        .init_resource::<ui::TouchHold>()
-        .add_systems(
-            Startup,
-            (startup_scene.spawn(), setup_assets, apply_window_settings).chain(),
-        )
-        .add_systems(
-            Update,
-            (
-                keyboard_shortcuts,
-                window_focus_pause,
-                close_and_save,
-                native_window_sync,
-                window_resize_layout,
-                rebuild_ui,
-                use_system_ui_font,
-                animate_ui_transitions,
-                initialize_number_inputs,
-                sync_setting_widgets,
-                update_clock_text,
-                schedule_settings_save,
-            )
-                .chain(),
-        )
+        .add_plugins(FeathersPlugins)
+        .init_state::<Screen>()
+        .init_resource::<state::GameSession>()
+        .add_plugins((AssetsPlugin, ThemePlugin, MinesUiPlugin, InputPlugin))
+        .add_systems(Startup, (spawn_camera, apply_cli_difficulty).chain())
         .run();
+}
+
+fn spawn_camera(mut commands: Commands) {
+    commands.spawn(Camera2d);
+}
+
+fn apply_cli_difficulty(
+    cli: Res<CliDifficulty>,
+    mut session: ResMut<GameSession>,
+    mut settings: ResMut<Settings>,
+    mut next: ResMut<NextState<Screen>>,
+) {
+    if let Some(difficulty) = cli.0 {
+        session.start_game(difficulty, &mut settings, &mut next);
+    }
 }
 
 fn parse_cli() -> Option<Difficulty> {
