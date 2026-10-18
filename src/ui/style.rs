@@ -62,29 +62,6 @@ pub fn text_button(label: &str, action: UiAction, variant: ButtonVariant) -> Box
     boxed_list(bsn_list! { @text_button_scene(caption, accessible, action, variant) })
 }
 
-/// A labelled button that is visible but cannot be activated (dimmed by the
-/// theme's disabled tokens). Used where an action is unavailable, e.g. paging
-/// past the last help page.
-pub fn disabled_button(label: &str) -> Box<dyn SceneList> {
-    let caption = label.to_owned();
-    let accessible = label.to_owned();
-    boxed_list(bsn_list! { @disabled_button_scene(caption, accessible) })
-}
-
-fn disabled_button_scene(label: String, accessible: String) -> impl Scene {
-    bsn! {
-        @FeathersButton {
-            @caption: bsn! {
-                Text({label})
-                TextFont { font_size: FontSize::Rem(FONT_BODY) }
-                ThemedText
-            },
-        }
-        AccessibleLabel({accessible})
-        bevy::ui::InteractionDisabled
-    }
-}
-
 fn text_button_scene(
     label: String,
     accessible: String,

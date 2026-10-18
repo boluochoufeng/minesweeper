@@ -7,20 +7,20 @@ use crate::assets::GameAssets;
 use crate::state::{DialogKind, GameSession};
 use crate::storage::{Scores, Settings};
 use crate::theme::{ThemePalette, tokens};
-use crate::ui::actions::UiAction;
+use crate::ui::actions::{ActionTarget, UiAction};
 use crate::ui::animation::UiTransition;
 use crate::ui::scores as scores_ui;
 use crate::ui::settings_dialog::{self, SettingsTabState};
 use crate::ui::status::format_time;
 use crate::ui::style::{self, FONT_BODY, FONT_CAPTION, FONT_SUBTITLE, FONT_TITLE};
 use bevy::feathers::controls::{
-    ButtonVariant, FeathersDialog, FeathersDialogBody, FeathersDialogClose, FeathersDialogFooter,
-    FeathersDialogHeader,
+    ButtonVariant, FeathersButton, FeathersDialog, FeathersDialogBody, FeathersDialogClose,
+    FeathersDialogFooter, FeathersDialogHeader,
 };
 use bevy::feathers::theme::{ThemeTextColor, ThemeToken, ThemedText};
 use bevy::prelude::*;
 use bevy::ui::rem;
-use bevy::ui_widgets::{ModalDialogBarrier, RequestClose};
+use bevy::ui_widgets::{ModalDialog, ModalDialogBarrier, RequestClose};
 
 /// Number of help pages.
 pub const HELP_PAGE_COUNT: usize = 4;
@@ -63,6 +63,7 @@ impl Plugin for DialogsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ActiveDialog>()
             .add_systems(Update, (sync_dialog, style_dialog_barrier))
+            .add_systems(PostUpdate, animate_dialog_panel)
             .add_observer(on_request_close);
     }
 }
@@ -70,6 +71,20 @@ impl Plugin for DialogsPlugin {
 /// Marker for the root entity of the currently open dialog.
 #[derive(Component, Default, Clone)]
 pub struct DialogRoot;
+
+/// The body texts of the help dialog, updated in place when the page turns.
+///
+/// Paging updates these entities in place. Respawning the modal on every page
+/// turn would replay the entrance transition of the dialog *root* (the
+/// full-screen [`ModalDialogBarrier`]), which makes the scrim scale up from
+/// small and reads as a screen-wide flash.
+#[derive(Component, Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum HelpPagePart {
+    #[default]
+    Title,
+    Text,
+    Counter,
+}
 
 #[derive(Resource, Default)]
 pub struct ActiveDialog {
@@ -88,10 +103,17 @@ fn sync_dialog(
     palette: Res<ThemePalette>,
     tab: Res<SettingsTabState>,
     mut active: ResMut<ActiveDialog>,
+    mut parts: Query<(&HelpPagePart, &mut Text)>,
+    buttons: Query<(Entity, &ActionTarget)>,
 ) {
     let kind = session.dialog;
-    let page = session.help_page;
-    if active.kind == kind && active.page == page {
+    let page = session.help_page.min(HELP_PAGE_COUNT - 1);
+    let rebuild = active.kind != kind || (kind.is_some() && active.entity.is_none());
+    if !rebuild {
+        if kind == Some(DialogKind::Help) && active.page != page {
+            apply_help_page(page, &mut parts, &buttons, &mut commands);
+            active.page = page;
+        }
         return;
     }
     if let Some(entity) = active.entity.take() {
@@ -107,6 +129,69 @@ fn sync_dialog(
     );
     let entity = commands.spawn_scene(scene).insert(DialogRoot).id();
     active.entity = Some(entity);
+}
+
+/// Mirrors a help-page change into the already spawned dialog.
+fn apply_help_page(
+    page: usize,
+    parts: &mut Query<(&HelpPagePart, &mut Text)>,
+    buttons: &Query<(Entity, &ActionTarget)>,
+    commands: &mut Commands,
+) {
+    let (title, body) = HELP_PAGES[page];
+    let counter = help_counter(page);
+    for (part, mut text) in parts.iter_mut() {
+        let content = match part {
+            HelpPagePart::Title => title,
+            HelpPagePart::Text => body,
+            HelpPagePart::Counter => counter.as_str(),
+        };
+        if text.0.as_str() != content {
+            *text = Text::new(content);
+        }
+    }
+    for (entity, target) in buttons.iter() {
+        let disabled = match target.action {
+            UiAction::HelpPrevious => page == 0,
+            UiAction::HelpNext => page + 1 >= HELP_PAGE_COUNT,
+            _ => continue,
+        };
+        let mut button = commands.entity(entity);
+        if disabled {
+            button.insert(bevy::ui::InteractionDisabled);
+        } else {
+            button.remove::<bevy::ui::InteractionDisabled>();
+        }
+    }
+}
+
+/// Applies the dialog entrance transition to the inner panel instead of the
+/// modal root: the root is the full-screen scrim, so animating it scales the
+/// whole scrim, which looks like the screen itself flickers.
+fn animate_dialog_panel(
+    mut commands: Commands,
+    roots: Query<&Children, Added<DialogRoot>>,
+    panels: Query<(), With<ModalDialog>>,
+    settings: Res<Settings>,
+) {
+    if settings.reduced_motion {
+        return;
+    }
+    let transition = UiTransition::dialog(true);
+    for children in &roots {
+        for child in children.iter() {
+            if panels.contains(child) {
+                commands.entity(child).insert((
+                    UiTransform {
+                        scale: Vec2::splat(transition.from_scale),
+                        translation: Val2::px(0.0, transition.from_y),
+                        ..UiTransform::IDENTITY
+                    },
+                    transition,
+                ));
+            }
+        }
+    }
 }
 
 fn style_dialog_barrier(
@@ -161,21 +246,14 @@ fn dialog_scene(
         DialogKind::Shortcuts => 500.0,
         _ => 440.0,
     };
-    let transition = UiTransition::dialog(!settings.reduced_motion);
     bsn! {
         @FeathersDialog {
             @width: px(width),
             @contents: bsn_list! { {contents} },
         }
-        UiTransform::IDENTITY
-        UiTransition {
-            elapsed: {transition.elapsed},
-            delay: {transition.delay},
-            duration: {transition.duration},
-            from_scale: {transition.from_scale},
-            from_y: {transition.from_y},
-            easing: {transition.easing},
-        }
+        // Style the scrim as part of the scene so the barrier is never rendered
+        // unstyled for the first frame after it spawns.
+        BackgroundColor({palette.0.scrim})
         DialogRoot
     }
 }
@@ -253,34 +331,7 @@ fn dialog_contents(
         ),
         DialogKind::Help => {
             let page = session.help_page.min(HELP_PAGE_COUNT - 1);
-            let (title, text) = HELP_PAGES[page];
-            let counter = format!("第 {} 页，共 {} 页", page + 1, HELP_PAGE_COUNT);
-            let mut pager = Vec::new();
-            if page == 0 {
-                pager.push(style::disabled_button("上一页"));
-            } else {
-                pager.push(button("上一页", UiAction::HelpPrevious, false));
-            }
-            if page + 1 >= HELP_PAGE_COUNT {
-                pager.push(style::disabled_button("下一页"));
-            } else {
-                pager.push(button("下一页", UiAction::HelpNext, false));
-            }
-            pager.push(button("关闭", UiAction::CloseDialog, true));
-            frame(
-                "扫雷帮助",
-                Box::new(bsn! {
-                    Node { flex_direction: FlexDirection::Column, row_gap: rem(0.5) }
-                    Children [
-                        {line(title, FONT_SUBTITLE, tokens::TEXT_MAIN)}
-                        --
-                        {line(text, FONT_BODY, tokens::TEXT_SECONDARY)}
-                        --
-                        {line(counter, FONT_CAPTION, tokens::TEXT_SECONDARY)}
-                    ]
-                }),
-                footer_buttons(pager),
-            )
+            frame("扫雷帮助", help_body(page), help_footer(page))
         }
         DialogKind::Shortcuts => frame(
             "键盘快捷键",
@@ -370,4 +421,76 @@ fn line(content: impl Into<String>, size: f32, token: ThemeToken) -> Box<dyn Sce
         TextFont { font_size: FontSize::Rem(size) }
         ThemeTextColor({token}) ThemedText
     })
+}
+
+fn help_counter(page: usize) -> String {
+    format!("第 {} 页，共 {} 页", page + 1, HELP_PAGE_COUNT)
+}
+
+fn help_body(page: usize) -> Box<dyn SceneList> {
+    let (title, text) = HELP_PAGES[page];
+    let counter = help_counter(page);
+    Box::new(bsn! {
+        Node { flex_direction: FlexDirection::Column, row_gap: rem(0.5) }
+        Children [
+            Text({title})
+            TextFont { font_size: FontSize::Rem(FONT_SUBTITLE) }
+            ThemeTextColor({tokens::TEXT_MAIN}) ThemedText
+            HelpPagePart::Title
+            --
+            Text({text})
+            TextFont { font_size: FontSize::Rem(FONT_BODY) }
+            ThemeTextColor({tokens::TEXT_SECONDARY}) ThemedText
+            HelpPagePart::Text
+            --
+            Text({counter})
+            TextFont { font_size: FontSize::Rem(FONT_CAPTION) }
+            ThemeTextColor({tokens::TEXT_SECONDARY}) ThemedText
+            HelpPagePart::Counter
+        ]
+    })
+}
+
+fn help_footer(page: usize) -> Box<dyn SceneList> {
+    footer_buttons(vec![
+        help_pager_button("上一页", UiAction::HelpPrevious, page == 0),
+        help_pager_button("下一页", UiAction::HelpNext, page + 1 >= HELP_PAGE_COUNT),
+        button("关闭", UiAction::CloseDialog, true),
+    ])
+}
+
+/// A pager button that keeps its `ActionTarget` even while disabled, so page
+/// turns can toggle [`bevy::ui::InteractionDisabled`] on the live button instead
+/// of rebuilding the footer.
+fn help_pager_button(label: &str, action: UiAction, disabled: bool) -> Box<dyn SceneList> {
+    let caption = label.to_owned();
+    let accessible = label.to_owned();
+    let variant = ButtonVariant::Normal;
+    if disabled {
+        Box::new(bsn! {
+            @FeathersButton {
+                @caption: bsn! {
+                    Text({caption})
+                    TextFont { font_size: FontSize::Rem(FONT_BODY) }
+                    ThemedText
+                },
+            }
+            ActionTarget { action: {action} }
+            AccessibleLabel({accessible})
+            bevy::ui::InteractionDisabled
+        })
+    } else {
+        Box::new(bsn! {
+            @FeathersButton {
+                @caption: bsn! {
+                    Text({caption})
+                    TextFont { font_size: FontSize::Rem(FONT_BODY) }
+                    ThemedText
+                },
+                @variant: {variant},
+            }
+            ActionTarget { action: {action} }
+            AccessibleLabel({accessible})
+        })
+    }
 }
