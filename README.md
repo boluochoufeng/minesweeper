@@ -1,91 +1,142 @@
-# Mines — Bevy recreation of GNOME Mines
+# 扫雷 (Minesweeper)
 
-This project recreates GNOME Mines 50.0 with Bevy 0.20 and Rust. It includes the
-standard and custom board sizes, first-click safety, question flags, chording,
-automatic clearing on flags, pausing, timing, persistent high scores, five board
-styles, four UI themes, keyboard/touch/mouse controls, help, and the original
-game credits. The UI is localized in Simplified Chinese and uses Bevy's
-system-font fallback for Chinese glyph coverage.
+基于 **Rust** 与 **Bevy** 开发的桌面扫雷游戏，还原经典 GNOME Mines 的玩法与多种盘面风格，并加入无猜模式、残局断点续玩与低功耗按需渲染等特性。
 
-## Bevy 0.20 features in use
+---
 
-The interface is built entirely with Bevy's native UI stack rather than an
-external immediate-mode GUI:
+## 功能特性
 
-- `bsn!` and `bsn_list!` scenes define the application shell and the dynamic
-  screens; `Commands::spawn_scene` and `despawn_children` swap them at runtime.
-- Custom `SceneComponent`s define reusable difficulty cards and dialog layouts.
-- Feathers (now shipped with Bevy as `bevy_feathers`) supplies buttons,
-  checkboxes, selects, tab lists, sliders, number inputs, and modal dialogs.
-- Feathers design tokens (`ThemeProps` → semantic token) drive every color, so
-  the four UI themes only remap tokens instead of hard-coding palette values.
-- `bevy_settings` persists reflected preferences as TOML in the platform
-  preferences directory.
-- Pointer observers (`On<Pointer<Press>>`, drag observers) handle left click,
-  right click, drag, and touch long-press; 0.20 `EditableText` powers the
-  custom-board number fields.
-- `UiTransform` transitions animate screens, dialogs, the pause state, and tile
-  feedback.
-- The window icon is rasterized from the upstream SVG with `resvg`;
-  `WindowResizeConstraints` plus a runtime clamp keep the layout usable, and
-  window geometry/maximized state are restored on launch.
+### 核心玩法与模式
+- **预设与自定义棋盘**：
+  - 内置三档经典难度：小型 `8 × 8`（10 雷）、中型 `16 × 16`（40 雷）、大型 `30 × 16`（99 雷）；
+  - 支持 `4 × 4` 至 `100 × 100` 自定义尺寸，提供**地雷数量**与**雷区占比（%）**双向实时联动输入。
+- **首击 `3 × 3` 安全保护**：首次揭开的格子及其周围 8 邻域保证无雷，直接打开成片空白区域。
+- **无猜模式（纯逻辑可解）**：
+  - 可在 **设置 → 游戏** 中开启“无猜模式”；
+  - 首击延迟布雷阶段通过三层确定性逻辑求解器（单格定式、双格差集消元、连通分量回溯与全局余雷收尾）配合局部换雷扰动生成可纯逻辑推演通关的棋局。
+- **残局自动保存与断点续玩**：
+  - 已开局且尚未分出胜负的棋盘在关闭窗口、退出程序或窗口失焦时自动持久化盘面与毫秒计时；
+  - 下次启动或在主界面时展示 **“继续上一局”** 横幅卡片（支持按 `Enter` 快速接续），停留在主界面或新局未首击退出不会覆盖已有残局。
+- **本地排行榜**：按“宽 × 高 × 雷数”规格独立保存最佳 Top 10 通关用时。
 
-## UI overview
+### 交互手感与无障碍
+- **丰富的棋盘微交互**：隐藏格悬停高亮、按住已翻开数字触发 8 邻域 Chord 联动按压预览、中键及左右键同时按压快速清除；
+- **防错警示反馈**：当已翻开数字周围插旗数超额时高亮提示，关闭问号标记且插旗超出总雷数时状态栏余雷计数自动显示负数并以危险色标识；
+- **全键盘导航**：方向键或 `H J K L` 移动光标，支持首次按键原地亮起光标及棋盘四边循环回绕，切回鼠标或触控后自动衔接坐标；
+- **智能自动暂停**：窗口失焦或打开设置/成绩/帮助等模态弹窗期间自动暂停计时器并在恢复后还原；
+- **无障碍支持**：每个格子均附带包含行列坐标与实时状态的语义标签。
 
-- Default "modern" board style: flat, theme-tinted tiles with no bitmap
-  artwork, drawn entirely by UI nodes.
-- Five board styles: `现代` (the default flat UI tile set) plus the four classic
-  GNOME glyph tile sets `背景颜色`, `经典`, `默认`, and `GNOME 现代`.
-- Four UI themes: `跟随系统`, `浅色`, `深色`, and `高对比度`; adjustable UI scale
-  (85%–150%); a reduced-motion toggle.
-- A modern shell: header bar with menu, restart, and pause buttons, a summary
-  subtitle for the current board, a floating flag/time status pill, and modal
-  dialogs for settings, scores, help (with page pager), keyboard shortcuts,
-  about, new game, and the custom board.
-- Minimum window size is 700×600; larger windows simply center the board and
-  scale the tile grid up to fit.
+### 视觉风格、低功耗与工程实现
+- **4 套界面主题 × 5 套棋盘风格**：
+  - 界面主题支持 `跟随系统`、`浅色`、`深色` 与 WCAG AAA 级 `高对比度`；
+  - 棋盘风格支持原生平坦 `现代` 主题，以及 GNOME Mines 经典的 `背景颜色`（1–8 渐变热力格）、`经典`、`默认` 与 `GNOME 现代`（矢量渐变数字图标）。
+- **视图缩放与动效**：支持 `85% – 150%` 全局界面缩放与“减弱动画”开关；棋盘数字字号按格子实际像素尺寸动态缩放，兼容超宽屏及细长自定义棋盘。
+- **低功耗按需渲染**：静止画面接近零资源占用，计时运行期间仅按整秒边界唤醒刷新。
+- **快速冷启动与原生图标**：内置纯几何 SVG 纹理，启动阶段跳过冗余系统字体全量扫描；Windows 平台通过 `build.rs` 在编译期直接从矢量图标生成多尺寸（`16`–`256`）`.exe` 应用图标资源。
 
-## Run
+---
 
+## 快速开始
+
+### 环境要求
+- Rust 工具链（支持 Edition 2024）
+- Linux 构建需额外安装 Bevy 所需的窗口、输入与音频系统开发库：
+  ```sh
+  sudo apt-get install -y \
+    pkg-config libasound2-dev libudev-dev \
+    libx11-dev libxi-dev libxcursor-dev libxrandr-dev \
+    libwayland-dev libxkbcommon-dev
+  ```
+
+### 构建与运行
 ```sh
 cargo run --release
 ```
 
-Optional command-line modes:
+### 命令行选项
+| 参数 | 说明 |
+| --- | --- |
+| `--small` | 直接启动小型棋盘（`8 × 8`，10 雷） |
+| `--medium` | 直接启动中型棋盘（`16 × 16`，40 雷） |
+| `--big` / `--large` | 直接启动大型棋盘（`30 × 16`，99 雷） |
+| `-v`, `--version` | 打印程序版本号 |
+| `-h`, `--help` | 显示命令行帮助信息 |
 
-```text
---small    8 × 8, 10 mines
---medium   16 × 16, 40 mines
---big      30 × 16, 99 mines
---version  print version
+开发诊断环境变量：设置 `MINES_PERF=1` 启动可切回连续帧率模式并每秒输出 FPS 与帧耗时诊断日志。
+
+### 代码检查与测试
+```sh
+cargo fmt --all -- --check
+cargo clippy --all-targets -- -D warnings
+cargo test
 ```
 
-## Controls
+---
 
-- Left click reveals a tile; click a revealed number to clear around it
-  (chording).
-- Right click, touch-and-hold, or Ctrl+left click cycles a tile's mark; the
-  setting panel can enable question marks and auto-flagging.
-- Arrow keys or `H J K L` move the keyboard cursor; Space reveals;
-  Ctrl+Space marks.
-- `P` (or the Pause key) toggles pause; the clock auto-pauses when the window
-  loses focus.
-- `Ctrl+N` opens the new-game screen, `Ctrl+R` restarts, `Ctrl+Q`/`Ctrl+W`
-  quits, and digits `1`–`3` start a preset difficulty while `4` opens the
-  custom-board dialog.
-- `Esc` closes the current dialog or toggles pause on the board.
-- `F1` help, `F2` settings, `F3` high scores, `F4` about, `F5` keyboard
-  shortcuts, `F6` custom board. In debug builds `F9` reveals the safe cells so
-  the victory flow can be tested.
+## 操作与快捷键
 
-Bevy App Settings stores preferences and window state in the platform
-preferences directory under `org.gnome.Mines/settings.toml`. Scores remain in
-the compatible `bevy-gnome-mines/data.json` file.
+### 鼠标与触摸操作
+| 操作 | 作用 |
+| --- | --- |
+| 左键点击未翻开格 | 翻开格子 |
+| 右键点击 / 触摸长按（≥ 500ms）/ `Ctrl+左键` | 循环切换标记（旗帜 / 问号 / 无） |
+| 左键或中键点击已翻开数字 / 左右键同按 | 当周围插旗数等于数字时清除其余未翻开格（Chord） |
 
-## Licensing and artwork
+> 在 macOS 平台下，`Cmd` 键与 `Ctrl` 键等效使用。
 
-The program is licensed under GPL-3.0-or-later; see [LICENSE](LICENSE).
-Files under `assets/` are copied from
-[GNOME Mines](https://github.com/GNOME/gnome-mines) and remain under their
-upstream licenses and attribution. GNOME Mines credits Richard Hoelscher as the
-artist. The GNOME name and application icon belong to their respective owners.
+### 键盘快捷键
+| 按键 | 作用 |
+| --- | --- |
+| `Enter` | 在主界面且无焦点占用时快速继续上一局残局 |
+| `1` / `2` / `3` / `4` | 切换小 / 中 / 大难度或打开自定义棋盘 |
+| 方向键 或 `H J K L` | 亮起/移动棋盘光标（支持四边循环回绕） |
+| `空格` | 首次按亮起光标；未翻开格执行翻开，已翻开数字格执行 Chord |
+| `Ctrl+空格`（macOS 亦支持 `Cmd+空格`） | 在光标格循环切换插旗 / 问号标记 |
+| `P` / `Pause` / `Esc` | 暂停或继续计时（关闭弹窗时 `Esc` 优先关闭当前弹窗） |
+| `Ctrl+N` / `Cmd+N` | 返回主界面（新游戏） |
+| `Ctrl+R` / `Cmd+R` | 重新开始当前难度 |
+| `Ctrl+Q` / `Ctrl+W`（macOS 支持 `Cmd`） | 保存进度并退出 |
+| `F1`–`F6` | 依次打开 帮助 / 设置 / 成绩 / 关于 / 快捷键 / 自定义棋盘 |
+| `F9`（仅 Debug 构建） | 翻开全部安全格，便于测试通关结算流程 |
+
+---
+
+## 项目结构
+
+```text
+.
+├── assets/                  # 应用图标与 GNOME Mines 主题矢量资源
+├── build.rs                 # Windows 可执行文件多尺寸图标资源生成脚本
+└── src/
+    ├── main.rs              # 程序入口、CLI 解析、响应式功率调度配置
+    ├── game.rs              # 扫雷核心盘面状态、连片展开、计时器与规则引擎
+    ├── solver.rs            # 三层确定性逻辑求解器与无猜局部换雷生成器
+    ├── state.rs             # 屏幕/弹窗状态机、暂停协调、确认拦截与残局恢复
+    ├── storage.rs           # 配置自愈、残局校验与 org.gnome.Mines 持久化迁移
+    ├── assets.rs            # 启动阶段矢量图元与图标贴图栅格化
+    ├── input.rs             # 全局快捷键与棋盘键盘导航处理
+    ├── theme.rs / theme/    # 界面主题解析、Design Tokens 与高对比度色板
+    └── ui.rs / ui/          # 界面模块（选关、自定义、棋盘、状态栏、设置与弹窗）
+```
+
+---
+
+## 配置与数据存储
+
+应用配置与对局数据统一保存在平台标准偏好目录的 `org.gnome.Mines` 子目录下：
+
+| 平台 | 配置文件（`settings.toml`）与数据文件（`data.json`）路径 |
+| --- | --- |
+| Windows | `%LocalAppData%\org.gnome.Mines\` |
+| Linux | `~/.config/org.gnome.Mines/`（或 `$XDG_CONFIG_HOME/org.gnome.Mines/`） |
+| macOS | `~/Library/Preferences/org.gnome.Mines/` |
+
+- `settings.toml`：保存界面主题、棋盘风格、缩放比例、游戏选项及窗口大小状态；
+- `data.json`：原子写入保存各难度最佳成绩与最近一局未完残局快照；若检测到早期版本的 `bevy-gnome-mines/data.json`，首次启动会自动迁移成绩与设置。
+
+---
+
+## 开源协议与致谢
+
+- 本项目采用 **GPL-3.0-or-later** 协议开源，详见 [LICENSE](LICENSE)。
+- `assets/` 目录下的图标与经典棋盘矢量美术素材源自上游项目 [GNOME Mines](https://github.com/GNOME/gnome-mines)（美术作者：Richard Hoelscher），遵循其各自上游开源许可与署名规范。
