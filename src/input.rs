@@ -2,8 +2,11 @@
 //
 // Keyboard shortcuts for game flow and the keyboard cursor.
 
-use crate::state::{CellAction, DialogKind, EscapeGuard, GameSession, PendingAction, Screen};
-use crate::storage::{Scores, Settings, save_progress};
+use crate::state::{
+    CellAction, DialogKind, EscapeGuard, GameSession, PendingAction, Screen, resolve_saved_game,
+    resume_from_slot,
+};
+use crate::storage::{SavedGameSlot, Scores, Settings, save_progress};
 use bevy::app::AppExit;
 use bevy::input_focus::InputFocus;
 use bevy::prelude::*;
@@ -18,6 +21,20 @@ impl Plugin for InputPlugin {
     }
 }
 
+/// True when the platform primary shortcut modifier (`Ctrl` everywhere, plus
+/// `Cmd` / `Super` on macOS) is currently held.
+pub fn primary_modifier_pressed(keyboard: &ButtonInput<KeyCode>) -> bool {
+    let ctrl = keyboard.pressed(KeyCode::ControlLeft) || keyboard.pressed(KeyCode::ControlRight);
+    #[cfg(target_os = "macos")]
+    {
+        ctrl || keyboard.pressed(KeyCode::SuperLeft) || keyboard.pressed(KeyCode::SuperRight)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        ctrl
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn keyboard_shortcuts(
     keyboard: Res<ButtonInput<KeyCode>>,
@@ -27,6 +44,7 @@ fn keyboard_shortcuts(
     mut session: ResMut<GameSession>,
     mut settings: ResMut<Settings>,
     mut scores: ResMut<Scores>,
+    mut saved_slot: ResMut<SavedGameSlot>,
     mut next: ResMut<NextState<Screen>>,
     mut commands: Commands,
     mut escape_guard: ResMut<EscapeGuard>,
@@ -46,36 +64,38 @@ fn keyboard_shortcuts(
     if escape_guard.0 > 0 {
         escape_guard.0 -= 1;
     }
-    let ctrl = keyboard.pressed(KeyCode::ControlLeft) || keyboard.pressed(KeyCode::ControlRight);
+    let primary_mod = primary_modifier_pressed(&keyboard);
 
-    if ctrl && (keyboard.just_pressed(KeyCode::KeyQ) || keyboard.just_pressed(KeyCode::KeyW)) {
-        save_progress(&settings, &scores.0);
+    if primary_mod && (keyboard.just_pressed(KeyCode::KeyQ) || keyboard.just_pressed(KeyCode::KeyW))
+    {
+        let saved = resolve_saved_game(&session, &settings, &mut saved_slot);
+        save_progress(&scores.0, saved);
         commands.queue(SaveSettingsSync::IfChanged);
         commands.write_message(AppExit::Success);
         return;
     }
     if keyboard.just_pressed(KeyCode::F1) {
-        session.dialog = Some(DialogKind::Help);
+        session.open_dialog(DialogKind::Help);
         return;
     }
     if keyboard.just_pressed(KeyCode::F2) {
-        session.dialog = Some(DialogKind::Settings);
+        session.open_dialog(DialogKind::Settings);
         return;
     }
     if keyboard.just_pressed(KeyCode::F3) {
-        session.dialog = Some(DialogKind::Scores);
+        session.open_dialog(DialogKind::Scores);
         return;
     }
     if keyboard.just_pressed(KeyCode::F4) {
-        session.dialog = Some(DialogKind::About);
+        session.open_dialog(DialogKind::About);
         return;
     }
     if keyboard.just_pressed(KeyCode::F5) {
-        session.dialog = Some(DialogKind::Shortcuts);
+        session.open_dialog(DialogKind::Shortcuts);
         return;
     }
     if keyboard.just_pressed(KeyCode::F6) {
-        session.show_custom_board(&mut next);
+        session.request(PendingAction::ShowCustomBoard, &mut settings, &mut next);
         return;
     }
     if keyboard.just_pressed(KeyCode::Escape) {
@@ -92,10 +112,10 @@ fn keyboard_shortcuts(
         }
         return;
     }
-    if ctrl && keyboard.just_pressed(KeyCode::KeyN) {
+    if primary_mod && keyboard.just_pressed(KeyCode::KeyN) {
         session.request(PendingAction::ShowNewGame, &mut settings, &mut next);
     }
-    if ctrl && keyboard.just_pressed(KeyCode::KeyR) {
+    if primary_mod && keyboard.just_pressed(KeyCode::KeyR) {
         session.request(PendingAction::Restart, &mut settings, &mut next);
     }
     if keyboard.just_pressed(KeyCode::Pause) || keyboard.just_pressed(KeyCode::KeyP) {
@@ -109,15 +129,16 @@ fn keyboard_shortcuts(
         if let Some(board) = session.board.as_mut() {
             board.debug_reveal_all();
         }
-        session.process_outcome(&mut scores);
-        // A real win freezes the clock; keep the shortcut faithful to it.
+        // A real win freezes the clock before recording the score.
         if session
             .board
             .as_ref()
             .is_some_and(|board| board.outcome == crate::game::Outcome::Won)
         {
             session.clock.pause();
+            session.sync_pause_state();
         }
+        session.process_outcome(&mut scores);
         return;
     }
     for (key, difficulty) in [
@@ -130,7 +151,20 @@ fn keyboard_shortcuts(
         }
     }
     if keyboard.just_pressed(KeyCode::Digit4) {
-        session.show_custom_board(&mut next);
+        session.request(PendingAction::ShowCustomBoard, &mut settings, &mut next);
+    }
+    if *screen.get() == Screen::NewGame
+        && focus.get().is_none()
+        && (keyboard.just_pressed(KeyCode::Enter) || keyboard.just_pressed(KeyCode::NumpadEnter))
+        && resume_from_slot(
+            &mut session,
+            &mut saved_slot,
+            &mut settings,
+            &scores,
+            &mut next,
+        )
+    {
+        return;
     }
     if session.dialog.is_some() {
         return;
@@ -139,39 +173,36 @@ fn keyboard_shortcuts(
         return;
     }
 
-    // Cache the board geometry, then release the immutable borrow.
-    let (width, height, mut x, mut y) = {
-        let Some(board) = session.board.as_ref() else {
-            return;
-        };
-        let index = session.keyboard_cursor.min(board.width * board.height - 1);
-        let (x, y) = board.coords(index);
-        (board.width, board.height, x, y)
-    };
-    let old = (x, y);
+    let mut dx = 0i32;
+    let mut dy = 0i32;
     if keyboard.just_pressed(KeyCode::ArrowLeft) || keyboard.just_pressed(KeyCode::KeyH) {
-        x = x.saturating_sub(1);
+        dx -= 1;
     }
     if keyboard.just_pressed(KeyCode::ArrowRight) || keyboard.just_pressed(KeyCode::KeyL) {
-        x = (x + 1).min(width - 1);
+        dx += 1;
     }
     if keyboard.just_pressed(KeyCode::ArrowUp) || keyboard.just_pressed(KeyCode::KeyK) {
-        y = y.saturating_sub(1);
+        dy -= 1;
     }
     if keyboard.just_pressed(KeyCode::ArrowDown) || keyboard.just_pressed(KeyCode::KeyJ) {
-        y = (y + 1).min(height - 1);
+        dy += 1;
     }
-    if (x, y) != old {
-        session.keyboard_cursor = y * width + x;
-        session.keyboard_active = true;
+    if dx != 0 || dy != 0 {
+        session.move_cursor(dx, dy);
     }
     if keyboard.just_pressed(KeyCode::Space) {
-        session.keyboard_active = true;
-        let revealed = session
-            .board
-            .as_ref()
-            .is_some_and(|board| board.cells[y * width + x].revealed);
-        let action = if ctrl {
+        let Some((x, y, revealed)) = session.board.as_ref().map(|board| {
+            let index = session.keyboard_cursor.min(board.width * board.height - 1);
+            let (x, y) = board.coords(index);
+            (x, y, board.cells[index].revealed)
+        }) else {
+            return;
+        };
+        if !session.keyboard_active {
+            session.keyboard_active = true;
+            return;
+        }
+        let action = if primary_mod {
             CellAction::Mark(x, y)
         } else if revealed {
             CellAction::Chord(x, y)

@@ -46,6 +46,7 @@ pub enum SettingToggle {
     QuestionMarks,
     AutoClear,
     AutoFlag,
+    NoGuessing,
     ReducedMotion,
 }
 
@@ -160,6 +161,11 @@ fn panel_content(index: usize, settings: &Settings) -> Box<dyn SceneList> {
 fn game_panel(settings: &Settings) -> Box<dyn SceneList> {
     let rows: Vec<Box<dyn SceneList>> = vec![
         checkbox_row(
+            "无猜模式（纯逻辑可解）",
+            SettingToggle::NoGuessing,
+            settings.no_guessing,
+        ),
+        checkbox_row(
             "使用问号标记",
             SettingToggle::QuestionMarks,
             settings.use_question_marks,
@@ -209,6 +215,16 @@ fn appearance_panel(settings: &Settings) -> Box<dyn SceneList> {
 }
 
 fn controls_panel() -> Box<dyn SceneList> {
+    let flag_shortcut = if cfg!(target_os = "macos") {
+        "方向键或 H J K L 移动，空格翻开，Ctrl/Cmd+空格插旗"
+    } else {
+        "方向键或 H J K L 移动，空格翻开，Ctrl+空格插旗"
+    };
+    let global_shortcuts = if cfg!(target_os = "macos") {
+        "Cmd+N 新游戏 · Cmd+R 重新开始 · P 暂停 · F1 帮助"
+    } else {
+        "Ctrl+N 新游戏 · Ctrl+R 重新开始 · P 暂停 · F1 帮助"
+    };
     column(vec![
         text_line("左键翻开 / 数字周围清除", FONT_BODY, tokens::TEXT_MAIN),
         text_line(
@@ -216,16 +232,8 @@ fn controls_panel() -> Box<dyn SceneList> {
             FONT_BODY,
             tokens::TEXT_SECONDARY,
         ),
-        text_line(
-            "方向键或 U J H K 移动，空格翻开，Ctrl+空格插旗",
-            FONT_BODY,
-            tokens::TEXT_SECONDARY,
-        ),
-        text_line(
-            "Ctrl+N 新游戏 · Ctrl+R 重新开始 · F1 帮助",
-            FONT_SMALL,
-            tokens::TEXT_SECONDARY,
-        ),
+        text_line(flag_shortcut, FONT_BODY, tokens::TEXT_SECONDARY),
+        text_line(global_shortcuts, FONT_SMALL, tokens::TEXT_SECONDARY),
     ])
 }
 
@@ -445,6 +453,7 @@ fn on_checkbox_changed(
         SettingToggle::QuestionMarks => settings.use_question_marks = change.value,
         SettingToggle::AutoClear => settings.auto_clear_on_flags = change.value,
         SettingToggle::AutoFlag => settings.use_autoflag = change.value,
+        SettingToggle::NoGuessing => settings.no_guessing = change.value,
         SettingToggle::ReducedMotion => settings.reduced_motion = change.value,
     }
 }

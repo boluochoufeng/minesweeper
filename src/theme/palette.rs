@@ -41,8 +41,11 @@ pub struct Palette {
     pub focus_ring: Color,
 
     pub cell_hidden: Color,
+    pub cell_hidden_hover: Color,
+    pub cell_hidden_pressed: Color,
     pub cell_revealed: Color,
     pub cell_border: Color,
+    pub cell_revealed_border: Color,
     pub cell_cursor: Color,
     pub cell_exploded_bg: Color,
     pub cell_wrong_bg: Color,
@@ -86,8 +89,11 @@ impl Palette {
             focus_ring: Color::srgba(0.231, 0.510, 0.965, 0.55),
 
             cell_hidden: Color::srgb(0.894, 0.918, 0.949),
+            cell_hidden_hover: Color::srgb(0.843, 0.878, 0.925),
+            cell_hidden_pressed: Color::srgb(0.788, 0.831, 0.894),
             cell_revealed: Color::srgb(0.984, 0.988, 0.996),
             cell_border: Color::srgb(0.843, 0.867, 0.902),
+            cell_revealed_border: Color::srgb(0.843, 0.867, 0.902),
             cell_cursor: Color::srgb(0.231, 0.510, 0.965),
             cell_exploded_bg: Color::srgb(0.992, 0.886, 0.882),
             cell_wrong_bg: Color::srgb(0.992, 0.886, 0.882),
@@ -139,8 +145,11 @@ impl Palette {
             focus_ring: Color::srgba(0.376, 0.647, 0.980, 0.65),
 
             cell_hidden: Color::srgb(0.141, 0.165, 0.212),
+            cell_hidden_hover: Color::srgb(0.184, 0.216, 0.275),
+            cell_hidden_pressed: Color::srgb(0.094, 0.110, 0.145),
             cell_revealed: Color::srgb(0.106, 0.125, 0.165),
             cell_border: Color::srgb(0.200, 0.227, 0.294),
+            cell_revealed_border: Color::srgb(0.200, 0.227, 0.294),
             cell_cursor: Color::srgb(0.376, 0.647, 0.980),
             cell_exploded_bg: Color::srgb(0.290, 0.114, 0.122),
             cell_wrong_bg: Color::srgb(0.290, 0.114, 0.122),
@@ -175,13 +184,13 @@ impl Palette {
             text_secondary: Color::BLACK,
             text_disabled: Color::srgb(0.35, 0.35, 0.35),
 
-            accent: Color::srgb(0.0, 0.0, 0.933),
-            accent_hover: Color::srgb(0.0, 0.0, 0.8),
-            accent_pressed: Color::srgb(0.0, 0.0, 0.667),
+            accent: Color::srgb_u8(0, 0, 184),
+            accent_hover: Color::srgb_u8(0, 0, 150),
+            accent_pressed: Color::srgb_u8(0, 0, 120),
             on_accent: Color::WHITE,
 
-            danger: Color::srgb(0.690, 0.0, 0.125),
-            success: Color::srgb(0.0, 0.392, 0.0),
+            danger: Color::srgb_u8(168, 0, 28),
+            success: Color::srgb_u8(0, 100, 0),
 
             control_bg: Color::srgb(0.901, 0.901, 0.901),
             control_bg_hover: Color::srgb(0.824, 0.824, 0.824),
@@ -189,26 +198,41 @@ impl Palette {
             control_bg_disabled: Color::srgb(0.949, 0.949, 0.949),
             field_bg: Color::srgb(0.901, 0.901, 0.901),
             field_border: Color::BLACK,
-            focus_ring: Color::srgb(0.0, 0.0, 0.933),
+            focus_ring: Color::srgb_u8(0, 0, 184),
 
-            cell_hidden: Color::WHITE,
+            cell_hidden: Color::srgb_u8(204, 210, 219),
+            cell_hidden_hover: Color::srgb_u8(176, 188, 206),
+            cell_hidden_pressed: Color::srgb_u8(148, 163, 184),
             cell_revealed: Color::WHITE,
             cell_border: Color::BLACK,
-            cell_cursor: Color::srgb(0.0, 0.0, 0.933),
-            cell_exploded_bg: Color::srgb(1.0, 0.8, 0.8),
-            cell_wrong_bg: Color::srgb(1.0, 0.8, 0.8),
+            cell_revealed_border: Color::srgb_u8(110, 118, 129),
+            cell_cursor: Color::srgb_u8(0, 0, 184),
+            cell_exploded_bg: Color::srgb_u8(255, 196, 196),
+            cell_wrong_bg: Color::srgb_u8(255, 196, 196),
             number_colors: [
-                Color::BLACK,
-                Color::BLACK,
-                Color::BLACK,
-                Color::BLACK,
-                Color::BLACK,
-                Color::BLACK,
-                Color::BLACK,
+                Color::srgb_u8(0, 51, 153),
+                Color::srgb_u8(0, 90, 43),
+                Color::srgb_u8(153, 0, 0),
+                Color::srgb_u8(75, 0, 130),
+                Color::srgb_u8(107, 45, 0),
+                Color::srgb_u8(0, 77, 90),
+                Color::srgb_u8(110, 0, 75),
                 Color::BLACK,
             ],
             pill_bg: Color::WHITE,
             pill_border: Color::BLACK,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn high_contrast_distinguishes_hidden_and_revealed_cells() {
+        let hc = Palette::high_contrast();
+        assert_ne!(hc.cell_hidden, hc.cell_revealed);
+        assert_ne!(hc.cell_border, hc.cell_revealed_border);
     }
 }

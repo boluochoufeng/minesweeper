@@ -26,7 +26,7 @@ pub enum Mark {
     Maybe,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Cell {
     pub mine: bool,
     pub revealed: bool,
@@ -48,6 +48,7 @@ pub struct Board {
     pub mine_count: usize,
     pub cells: Vec<Cell>,
     pub placed: bool,
+    pub no_guessing: bool,
     pub outcome: Outcome,
     pub revealed_count: usize,
     pub flag_count: usize,
@@ -65,6 +66,7 @@ impl Board {
             mine_count,
             cells: vec![Cell::default(); width * height],
             placed: false,
+            no_guessing: false,
             outcome: Outcome::InProgress,
             revealed_count: 0,
             flag_count: 0,
@@ -85,6 +87,21 @@ impl Board {
     #[inline]
     pub fn contains(&self, x: i32, y: i32) -> bool {
         x >= 0 && y >= 0 && x < self.width as i32 && y < self.height as i32
+    }
+
+    /// True when a revealed numbered cell currently has more adjacent flags
+    /// than its number permits.
+    pub fn has_flag_warning(&self, index: usize) -> bool {
+        let cell = self.cells[index];
+        if !cell.revealed || cell.mine || cell.adjacent == 0 {
+            return false;
+        }
+        let (x, y) = self.coords(index);
+        let flags = self
+            .neighbours(x, y)
+            .filter(|&nearby| self.cells[nearby].mark == Mark::Flag)
+            .count() as u8;
+        flags > cell.adjacent
     }
 
     pub fn neighbours(&self, x: usize, y: usize) -> impl Iterator<Item = usize> + '_ {
@@ -193,16 +210,30 @@ impl Board {
     }
 
     fn place_mines<R: Rng + ?Sized>(&mut self, safe_x: usize, safe_y: usize, rng: &mut R) {
-        let mut candidates: Vec<usize> = (0..self.cells.len())
-            .filter(|&index| {
-                let (x, y) = self.coords(index);
-                (x as i32 - safe_x as i32).abs() > 1 || (y as i32 - safe_y as i32).abs() > 1
-            })
-            .collect();
-        candidates.shuffle(rng);
+        if self.no_guessing {
+            let mines = crate::solver::generate_no_guess_mines(
+                self.width,
+                self.height,
+                self.mine_count,
+                safe_x,
+                safe_y,
+                rng,
+            );
+            for (cell, &is_mine) in self.cells.iter_mut().zip(mines.iter()) {
+                cell.mine = is_mine;
+            }
+        } else {
+            let mut candidates: Vec<usize> = (0..self.cells.len())
+                .filter(|&index| {
+                    let (x, y) = self.coords(index);
+                    (x as i32 - safe_x as i32).abs() > 1 || (y as i32 - safe_y as i32).abs() > 1
+                })
+                .collect();
+            candidates.shuffle(rng);
 
-        for &index in candidates.iter().take(self.mine_count) {
-            self.cells[index].mine = true;
+            for &index in candidates.iter().take(self.mine_count) {
+                self.cells[index].mine = true;
+            }
         }
 
         for index in 0..self.cells.len() {
@@ -345,23 +376,25 @@ impl Board {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct GameClock {
     accumulated: Duration,
     started_at: Option<Instant>,
-}
-
-impl Default for GameClock {
-    fn default() -> Self {
-        Self {
-            accumulated: Duration::ZERO,
-            started_at: None,
-        }
-    }
+    started: bool,
 }
 
 impl GameClock {
+    /// Restore a running clock starting from a previously accumulated duration.
+    pub fn from_elapsed(elapsed: Duration) -> Self {
+        Self {
+            accumulated: elapsed,
+            started_at: Some(Instant::now()),
+            started: true,
+        }
+    }
+
     pub fn start(&mut self) {
+        self.started = true;
         if self.started_at.is_none() {
             self.started_at = Some(Instant::now());
         }
@@ -374,7 +407,7 @@ impl GameClock {
     }
 
     pub fn resume(&mut self) {
-        if self.started_at.is_none() && self.accumulated > Duration::ZERO {
+        if self.started && self.started_at.is_none() {
             self.started_at = Some(Instant::now());
         }
     }
@@ -384,7 +417,7 @@ impl GameClock {
     }
 
     pub fn has_started(&self) -> bool {
-        self.started_at.is_some() || self.accumulated > Duration::ZERO
+        self.started
     }
 
     pub fn is_running(&self) -> bool {
@@ -520,5 +553,63 @@ mod tests {
 
         assert_eq!(board.cells[mine].mark, Mark::Flag);
         assert_eq!(board.flag_count, 1);
+    }
+
+    #[test]
+    fn flag_warning_triggers_when_adjacent_flags_exceed_number() {
+        let mut board = Board::new(4, 4, 1);
+        board.placed = true;
+        let mine = board.index(0, 0);
+        board.cells[mine].mine = true;
+        let center = board.index(1, 1);
+        board.cells[center].adjacent = 1;
+        board.cells[center].revealed = true;
+        board.revealed_count = 1;
+
+        board.cycle_mark(0, 0, false, false, false);
+        assert!(!board.has_flag_warning(center));
+
+        board.cycle_mark(2, 1, false, false, false);
+        assert!(board.has_flag_warning(center));
+    }
+
+    #[test]
+    fn no_guessing_mode_generates_logically_solvable_boards() {
+        let cases = [
+            (8, 8, 10, [(0usize, 0usize), (4, 4)]),
+            (16, 16, 40, [(0, 0), (8, 8)]),
+            (30, 16, 99, [(0, 0), (15, 8)]),
+        ];
+        for (width, height, mines, starts) in cases {
+            for (seed_offset, &(sx, sy)) in starts.iter().enumerate() {
+                for trial in 0u64..4 {
+                    let seed = (width as u64) * 1000
+                        + (height as u64) * 100
+                        + (seed_offset as u64) * 10
+                        + trial;
+                    let mut rng = StdRng::seed_from_u64(seed);
+                    let mut board = Board::new(width, height, mines);
+                    board.no_guessing = true;
+                    assert!(board.reveal(sx, sy, &mut rng, false, false));
+
+                    for dy in -1..=1i32 {
+                        for dx in -1..=1i32 {
+                            let nx = sx as i32 + dx;
+                            let ny = sy as i32 + dy;
+                            if board.contains(nx, ny) {
+                                assert!(!board.cells[board.index(nx as usize, ny as usize)].mine);
+                            }
+                        }
+                    }
+
+                    let mine_vec: Vec<bool> = board.cells.iter().map(|cell| cell.mine).collect();
+                    assert_eq!(mine_vec.iter().filter(|&&m| m).count(), mines);
+                    assert!(
+                        crate::solver::is_solvable(width, height, mines, &mine_vec, sx, sy),
+                        "generated {width}x{height} ({mines}) board from ({sx},{sy}) on seed {seed} must be logically solvable"
+                    );
+                }
+            }
+        }
     }
 }

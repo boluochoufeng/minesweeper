@@ -8,11 +8,15 @@ description = "A Bevy recreation of GNOME Mines"
 [dependencies]
 bevy = { version = "0.20.0", features = ["bevy_feathers", "bevy_settings", "system_font_discovery"] }
 dirs = "6.0"
+icu_provider = { version = "2.2", default-features = false, features = ["logging"] }
 rand = "0.9"
-resvg = { version = "0.45", default-features = false, features = ["system-fonts", "text"] }
+resvg = { version = "0.45", default-features = false }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 winit = { version = "0.30.13", default-features = false }
+
+[build-dependencies]
+resvg = { version = "0.45", default-features = false }
 
 [profile.dev]
 opt-level = 1

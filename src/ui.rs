@@ -30,7 +30,6 @@ impl Plugin for MinesUiPlugin {
             new_game::NewGameScreenPlugin,
             custom_board::CustomBoardScreenPlugin,
             board::BoardScreenPlugin,
-            menu::MenuPlugin,
             status::StatusPlugin,
             dialogs::DialogsPlugin,
             settings_dialog::SettingsDialogPlugin,

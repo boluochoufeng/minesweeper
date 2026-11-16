@@ -17,12 +17,6 @@ use bevy::prelude::*;
 use bevy::ui::rem;
 use bevy::ui_widgets::popover::{Popover, PopoverAlign, PopoverPlacement, PopoverSide};
 
-pub struct MenuPlugin;
-
-impl Plugin for MenuPlugin {
-    fn build(&self, _app: &mut App) {}
-}
-
 /// Header bar shared by every screen.
 pub fn header(
     title: String,
@@ -64,9 +58,14 @@ pub fn header(
     })
 }
 
+/// Marker on the header subtitle text node so live board metadata can update it.
+#[derive(Component, Debug, Clone, Copy, Default)]
+pub struct HeaderSubtitleText;
+
 fn title_column(title: String, subtitle: Option<String>) -> Box<dyn SceneList> {
     let subtitle_node: Box<dyn SceneList> = match subtitle {
         Some(subtitle) => Box::new(bsn! {
+            HeaderSubtitleText
             Text({subtitle})
             TextFont { font_size: FontSize::Rem(FONT_CAPTION) }
             ThemeTextColor(tokens::TEXT_SECONDARY) ThemedText

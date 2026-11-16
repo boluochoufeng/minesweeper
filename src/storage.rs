@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
-// Settings and high-score persistence. Settings are stored by `bevy_settings`
-// as TOML in the platform preferences directory; scores stay in the compatible
-// `bevy-gnome-mines/data.json` file.
+// Settings and high-score persistence. Both `settings.toml` (managed by
+// `bevy_settings`) and `data.json` (scores) live under the unified
+// `org.gnome.Mines` preferences directory; legacy `bevy-gnome-mines/data.json`
+// files are migrated automatically on first launch.
 
+use crate::game::{Board, Cell, Mark, NEIGHBOURS, Outcome};
 use bevy::{
     platform::dirs::preferences_dir,
     prelude::*,
@@ -13,7 +15,11 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+/// Canonical reverse-DNS application identifier shared by windowing, settings
+/// and score persistence.
+pub const APP_ID: &str = "org.gnome.Mines";
 
 /// Values for [`Settings::theme`] that select the board art style.
 pub const BOARD_STYLES: [(&str, &str); 5] = [
@@ -32,6 +38,10 @@ pub const UI_THEMES: [(&str, &str); 4] = [
     ("high-contrast", "高对比度"),
 ];
 
+/// Supported custom board width/height bounds.
+pub const MIN_CUSTOM_DIM: usize = 4;
+pub const MAX_CUSTOM_DIM: usize = 100;
+
 /// Smallest logical window size the shell keeps; also enforced when a window
 /// size arrives from settings or a programmatic resize.
 pub const MIN_WINDOW_WIDTH: f32 = 700.0;
@@ -39,6 +49,9 @@ pub const MIN_WINDOW_HEIGHT: f32 = 600.0;
 
 /// Upper bound accepted for persisted window sizes.
 const MAX_WINDOW_SIZE: f32 = 16_384.0;
+
+/// Cap restored elapsed durations at ~7 days so corrupt files cannot overflow.
+const MAX_SAVED_ELAPSED_MS: u64 = 7 * 24 * 3_600 * 1_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Reflect, Default)]
 #[reflect(Default)]
@@ -57,9 +70,10 @@ impl Difficulty {
             Self::Medium => (16, 16, 40),
             Self::Large => (30, 16, 99),
             Self::Custom => {
-                let width = settings.custom_width.clamp(4, 100);
-                let height = settings.custom_height.clamp(4, 100);
-                let mines = settings.custom_mines.clamp(1, width * height - 10);
+                let width = settings.custom_width.clamp(MIN_CUSTOM_DIM, MAX_CUSTOM_DIM);
+                let height = settings.custom_height.clamp(MIN_CUSTOM_DIM, MAX_CUSTOM_DIM);
+                let max_mines = (width * height).saturating_sub(10).max(1);
+                let mines = settings.custom_mines.clamp(1, max_mines);
                 (width, height, mines)
             }
         }
@@ -91,6 +105,7 @@ pub struct Settings {
     pub use_question_marks: bool,
     pub use_autoflag: bool,
     pub auto_clear_on_flags: bool,
+    pub no_guessing: bool,
     pub custom_width: usize,
     pub custom_height: usize,
     pub custom_mines: usize,
@@ -110,6 +125,7 @@ impl Default for Settings {
             use_question_marks: true,
             use_autoflag: false,
             auto_clear_on_flags: false,
+            no_guessing: false,
             custom_width: 16,
             custom_height: 16,
             custom_mines: 40,
@@ -151,8 +167,8 @@ pub fn sanitize_settings(settings: &mut Settings) {
     };
 
     settings.ui_scale = settings.ui_scale_factor();
-    settings.custom_width = settings.custom_width.clamp(4, 100);
-    settings.custom_height = settings.custom_height.clamp(4, 100);
+    settings.custom_width = settings.custom_width.clamp(MIN_CUSTOM_DIM, MAX_CUSTOM_DIM);
+    settings.custom_height = settings.custom_height.clamp(MIN_CUSTOM_DIM, MAX_CUSTOM_DIM);
     // Leave at least ten non-mine cells so a custom board stays solvable.
     let max_mines = (settings.custom_width * settings.custom_height).saturating_sub(10);
     settings.custom_mines = settings.custom_mines.clamp(1, max_mines.max(1));
@@ -168,7 +184,7 @@ fn sanitize_window_dimension(value: f32, minimum: f32) -> f32 {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Score {
     pub width: usize,
     pub height: usize,
@@ -222,44 +238,246 @@ impl Scores {
     }
 }
 
+/// Serialized snapshot of an active in-progress board and its elapsed clock.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SavedGame {
+    pub difficulty: Difficulty,
+    pub width: usize,
+    pub height: usize,
+    pub mine_count: usize,
+    #[serde(default)]
+    pub no_guessing: bool,
+    pub elapsed_millis: u64,
+    pub cells: Vec<Cell>,
+}
+
+/// Runtime resource holding a resumable saved game (loaded at startup or
+/// checkpointed while playing).
+#[derive(Resource, Debug, Default, Clone)]
+pub struct SavedGameSlot(pub Option<SavedGame>);
+
+impl SavedGame {
+    /// Build a snapshot from an active, placed, unfinished board.
+    pub fn from_board(difficulty: Difficulty, board: &Board, elapsed: Duration) -> Option<Self> {
+        if !board.placed || board.revealed_count == 0 || board.outcome != Outcome::InProgress {
+            return None;
+        }
+        let elapsed_millis = elapsed.as_millis().min(u128::from(MAX_SAVED_ELAPSED_MS)) as u64;
+        Some(Self {
+            difficulty,
+            width: board.width,
+            height: board.height,
+            mine_count: board.mine_count,
+            no_guessing: board.no_guessing,
+            elapsed_millis,
+            cells: board.cells.clone(),
+        })
+    }
+
+    pub fn mines_left(&self) -> i64 {
+        let flags = self
+            .cells
+            .iter()
+            .filter(|cell| !cell.revealed && cell.mark == Mark::Flag)
+            .count();
+        self.mine_count as i64 - flags as i64
+    }
+
+    pub fn elapsed_secs(&self) -> u64 {
+        self.elapsed_millis / 1_000
+    }
+
+    /// Validate bounds and invariants, recomputing derived neighbour counts so
+    /// tampered snapshots are safely rejected before entering gameplay.
+    pub fn validated(mut self) -> Option<Self> {
+        if !(MIN_CUSTOM_DIM..=MAX_CUSTOM_DIM).contains(&self.width)
+            || !(MIN_CUSTOM_DIM..=MAX_CUSTOM_DIM).contains(&self.height)
+        {
+            return None;
+        }
+        let total = self.width * self.height;
+        if self.cells.len() != total || total <= 10 || !(1..=total - 10).contains(&self.mine_count)
+        {
+            return None;
+        }
+        let actual_mines = self.cells.iter().filter(|cell| cell.mine).count();
+        if actual_mines != self.mine_count {
+            return None;
+        }
+        if self.cells.iter().any(|cell| cell.revealed && cell.mine) {
+            return None;
+        }
+        for cell in &mut self.cells {
+            if cell.revealed {
+                cell.mark = Mark::None;
+            }
+        }
+        let revealed_count = self.cells.iter().filter(|cell| cell.revealed).count();
+        if !(1..total - self.mine_count).contains(&revealed_count) {
+            return None;
+        }
+        let mine_flags: Vec<bool> = self.cells.iter().map(|cell| cell.mine).collect();
+        for idx in 0..total {
+            let x = (idx % self.width) as i32;
+            let y = (idx / self.width) as i32;
+            let mut count = 0u8;
+            for (dx, dy) in NEIGHBOURS {
+                let nx = x + dx;
+                let ny = y + dy;
+                if nx >= 0 && ny >= 0 && (nx as usize) < self.width && (ny as usize) < self.height {
+                    let n_idx = ny as usize * self.width + nx as usize;
+                    if mine_flags[n_idx] {
+                        count += 1;
+                    }
+                }
+            }
+            self.cells[idx].adjacent = count;
+        }
+        self.elapsed_millis = self.elapsed_millis.min(MAX_SAVED_ELAPSED_MS);
+        Some(self)
+    }
+
+    /// Convert a validated snapshot back into a live [`Board`] and elapsed
+    /// clock duration.
+    pub fn into_restored(self) -> Option<(Difficulty, Board, Duration)> {
+        let saved = self.validated()?;
+        let revealed_count = saved.cells.iter().filter(|cell| cell.revealed).count();
+        let flag_count = saved
+            .cells
+            .iter()
+            .filter(|cell| !cell.revealed && cell.mark == Mark::Flag)
+            .count();
+        let board = Board {
+            width: saved.width,
+            height: saved.height,
+            mine_count: saved.mine_count,
+            cells: saved.cells,
+            placed: true,
+            no_guessing: saved.no_guessing,
+            outcome: Outcome::InProgress,
+            revealed_count,
+            flag_count,
+            exploded_cell: None,
+        };
+        Some((
+            saved.difficulty,
+            board,
+            Duration::from_millis(saved.elapsed_millis),
+        ))
+    }
+}
+
+/// Persisted non-settings data stored in `org.gnome.Mines/data.json`.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GameData {
+    pub scores: Vec<Score>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub saved_game: Option<SavedGame>,
+}
+
+/// Legacy single-file store (`bevy-gnome-mines/data.json`) kept for automatic
+/// upgrade migration.
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
-pub struct PersistentData {
+struct LegacyPersistentData {
     pub settings: Settings,
     pub scores: Vec<Score>,
 }
 
-impl PersistentData {
-    /// Read the JSON store. A missing file is normal; an unreadable or corrupt
-    /// file is reported and moved aside so the next save starts from a clean
-    /// slate without silently discarding the player's scores.
-    pub fn load() -> Self {
-        data_path()
-            .map(|path| load_from_path(&path))
-            .unwrap_or_default()
-    }
+/// Startup snapshot returned after loading modern storage or migrating legacy
+/// `bevy-gnome-mines/data.json`.
+#[derive(Debug, Default)]
+pub struct LoadedPersistence {
+    pub settings: Settings,
+    pub scores: Vec<Score>,
+    pub saved_game: Option<SavedGame>,
+    pub migrate_settings: bool,
+}
 
-    pub fn save(&self) -> std::io::Result<()> {
-        let Some(path) = data_path() else {
-            return Ok(());
-        };
+impl GameData {
+    pub fn save_to(&self, path: &Path) -> std::io::Result<()> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
         let text = serde_json::to_string_pretty(self)
-            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
-        write_atomic(&path, &text)
+            .map_err(|error| std::io::Error::new(ErrorKind::InvalidData, error))?;
+        write_atomic(path, &text)
     }
 }
 
-fn load_from_path(path: &Path) -> PersistentData {
+/// Load scores, any resumable saved game (and legacy settings when migrating)
+/// from the platform storage directories.
+pub fn load_persistence() -> LoadedPersistence {
+    load_persistence_at(
+        data_path().as_deref(),
+        legacy_data_path().as_deref(),
+        settings_path().as_deref(),
+    )
+}
+
+fn load_persistence_at(
+    modern_path: Option<&Path>,
+    legacy_path: Option<&Path>,
+    settings_file: Option<&Path>,
+) -> LoadedPersistence {
+    if let Some(modern) = modern_path
+        && modern.exists()
+    {
+        let data: GameData = load_json_from_path(modern);
+        return LoadedPersistence {
+            settings: Settings::default(),
+            scores: data.scores,
+            saved_game: data.saved_game.and_then(SavedGame::validated),
+            migrate_settings: false,
+        };
+    }
+
+    if let Some(legacy) = legacy_path
+        && legacy.exists()
+    {
+        info!(
+            "Migrating legacy game data from {} to unified {} directory",
+            legacy.display(),
+            APP_ID
+        );
+        let mut legacy_data: LegacyPersistentData = load_json_from_path(legacy);
+        sanitize_settings(&mut legacy_data.settings);
+        if let Some(modern) = modern_path {
+            let migrated = GameData {
+                scores: legacy_data.scores.clone(),
+                saved_game: None,
+            };
+            if let Err(error) = migrated.save_to(modern) {
+                warn!(
+                    "Could not write migrated scores to {}: {error}",
+                    modern.display()
+                );
+            }
+        }
+        let migrate_settings = settings_file.is_some_and(|path| !path.exists());
+        return LoadedPersistence {
+            settings: legacy_data.settings,
+            scores: legacy_data.scores,
+            saved_game: None,
+            migrate_settings,
+        };
+    }
+
+    LoadedPersistence::default()
+}
+
+fn load_json_from_path<T>(path: &Path) -> T
+where
+    T: for<'de> Deserialize<'de> + Default,
+{
     let text = match fs::read_to_string(path) {
         Ok(text) => text,
         Err(error) => {
             if error.kind() != ErrorKind::NotFound {
                 warn!("Could not read game data {}: {error}", path.display());
             }
-            return PersistentData::default();
+            return T::default();
         }
     };
     match serde_json::from_str(&text) {
@@ -273,7 +491,7 @@ fn load_from_path(path: &Path) -> PersistentData {
                     warn!("Could not move unreadable game data aside: {error}");
                 }
             }
-            PersistentData::default()
+            T::default()
         }
     }
 }
@@ -305,32 +523,37 @@ fn corrupt_backup_path(path: &Path) -> PathBuf {
     path.with_file_name(format!("data.json.corrupt-{seconds}"))
 }
 
+/// Unified per-user application directory (`.../org.gnome.Mines`).
+pub fn app_data_dir() -> Option<PathBuf> {
+    preferences_dir().map(|dir| dir.join(APP_ID))
+}
+
+/// Modern score store (`.../org.gnome.Mines/data.json`).
 pub fn data_path() -> Option<PathBuf> {
+    app_data_dir().map(|dir| dir.join("data.json"))
+}
+
+/// Legacy score/settings store (`.../bevy-gnome-mines/data.json`) checked when
+/// migrating older installations.
+pub fn legacy_data_path() -> Option<PathBuf> {
     dirs::config_dir().map(|dir| dir.join("bevy-gnome-mines").join("data.json"))
 }
 
 /// Where `bevy_settings` stores `settings.toml` for this app.
 pub fn settings_path() -> Option<PathBuf> {
-    preferences_dir().map(|dir| dir.join("org.gnome.Mines").join("settings.toml"))
+    app_data_dir().map(|dir| dir.join("settings.toml"))
 }
 
-/// True on the first launch after upgrading from the JSON-only releases: a
-/// legacy `data.json` exists, but the modern settings file has not been written
-/// yet.
-pub fn needs_settings_migration() -> bool {
-    let Some(settings) = settings_path() else {
-        return false;
+/// Persist the score table and optional in-progress game to `org.gnome.Mines/data.json`.
+pub fn save_progress(scores: &[Score], saved_game: Option<&SavedGame>) {
+    let Some(path) = data_path() else {
+        return;
     };
-    !settings.exists() && data_path().is_some_and(|path| path.exists())
-}
-
-/// Persist the score table together with a snapshot of the settings.
-pub fn save_progress(settings: &Settings, scores: &[Score]) {
-    let data = PersistentData {
-        settings: settings.clone(),
+    let data = GameData {
         scores: scores.to_vec(),
+        saved_game: saved_game.cloned(),
     };
-    if let Err(error) = data.save() {
+    if let Err(error) = data.save_to(&path) {
         warn!("Could not save game data: {error}");
     }
 }
@@ -410,8 +633,7 @@ mod tests {
         let path = dir.join("data.json");
         fs::write(&path, "not json at all").expect("write corrupt file");
 
-        let data = load_from_path(&path);
-        assert_eq!(data.settings, Settings::default());
+        let data: GameData = load_json_from_path(&path);
         assert!(data.scores.is_empty());
         assert!(!path.exists());
 
@@ -437,9 +659,155 @@ mod tests {
     #[test]
     fn missing_file_loads_defaults() {
         let dir = scratch_dir("missing");
-        let data = load_from_path(&dir.join("data.json"));
-        assert_eq!(data.settings, Settings::default());
+        let data: GameData = load_json_from_path(&dir.join("data.json"));
         assert!(data.scores.is_empty());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn legacy_data_migrates_scores_and_settings_into_unified_dir() {
+        let dir = scratch_dir("migrate");
+        let legacy_path = dir.join("bevy-gnome-mines").join("data.json");
+        let modern_dir = dir.join(APP_ID);
+        let modern_data = modern_dir.join("data.json");
+        let modern_settings = modern_dir.join("settings.toml");
+
+        fs::create_dir_all(legacy_path.parent().unwrap()).expect("create legacy dir");
+        let legacy_payload = LegacyPersistentData {
+            settings: Settings {
+                theme: "classic".to_owned(),
+                custom_width: 24,
+                ..Settings::default()
+            },
+            scores: vec![Score {
+                width: 8,
+                height: 8,
+                mines: 10,
+                seconds: 42,
+                timestamp: 1_700_000_000,
+            }],
+        };
+        fs::write(
+            &legacy_path,
+            serde_json::to_string_pretty(&legacy_payload).expect("serialize legacy"),
+        )
+        .expect("write legacy file");
+
+        let loaded = load_persistence_at(
+            Some(&modern_data),
+            Some(&legacy_path),
+            Some(&modern_settings),
+        );
+        assert!(loaded.migrate_settings);
+        assert_eq!(loaded.settings.theme, "classic");
+        assert_eq!(loaded.settings.custom_width, 24);
+        assert_eq!(loaded.scores, legacy_payload.scores);
+        assert!(
+            modern_data.exists(),
+            "migrated scores must be written to unified dir"
+        );
+        let written = fs::read_to_string(&modern_data).expect("read migrated json");
+        assert!(
+            !written.contains("\"settings\""),
+            "modern data.json should only store non-settings game data"
+        );
+
+        // Subsequent launches read directly from `org.gnome.Mines/data.json` without re-migrating.
+        let second = load_persistence_at(
+            Some(&modern_data),
+            Some(&legacy_path),
+            Some(&modern_settings),
+        );
+        assert!(!second.migrate_settings);
+        assert_eq!(second.scores, legacy_payload.scores);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn saved_game_round_trips_and_rejects_tampered_boards() {
+        use rand::{SeedableRng, rngs::StdRng};
+
+        let dir = scratch_dir("saved_game");
+        let data_file = dir.join("data.json");
+
+        let mut rng = StdRng::seed_from_u64(1234);
+        let mut board = Board::new(8, 8, 10);
+        board.no_guessing = true;
+        assert!(board.reveal(3, 3, &mut rng, false, false));
+
+        // Mark one hidden cell with a flag so flag_count is also exercised.
+        let flag_idx = board
+            .cells
+            .iter()
+            .position(|cell| !cell.revealed)
+            .expect("unfinished board must still have hidden cells");
+        let (fx, fy) = board.coords(flag_idx);
+        assert!(board.cycle_mark(fx, fy, false, false, false));
+
+        let saved = SavedGame::from_board(Difficulty::Small, &board, Duration::from_millis(84_320))
+            .expect("active placed board produces a snapshot");
+
+        GameData {
+            scores: Vec::new(),
+            saved_game: Some(saved.clone()),
+        }
+        .save_to(&data_file)
+        .expect("save data.json");
+
+        let loaded = load_persistence_at(Some(&data_file), None, None);
+        let restored_snap = loaded.saved_game.expect("saved game should load cleanly");
+        let (difficulty, restored_board, elapsed) = restored_snap
+            .into_restored()
+            .expect("validated snapshot must restore");
+        assert_eq!(difficulty, Difficulty::Small);
+        assert_eq!(elapsed, Duration::from_millis(84_320));
+        assert!(restored_board.placed);
+        assert!(restored_board.no_guessing);
+        assert_eq!(restored_board.width, board.width);
+        assert_eq!(restored_board.height, board.height);
+        assert_eq!(restored_board.mine_count, board.mine_count);
+        assert_eq!(restored_board.revealed_count, board.revealed_count);
+        assert_eq!(restored_board.flag_count, board.flag_count);
+        assert_eq!(restored_board.cells, board.cells);
+
+        // Tampered: mismatched mine_count.
+        let mut bad_mines = saved.clone();
+        bad_mines.mine_count += 1;
+        assert!(bad_mines.into_restored().is_none());
+
+        // Tampered: a revealed cell claims to be a mine.
+        let mut bad_revealed_mine = saved.clone();
+        let revealed_idx = bad_revealed_mine
+            .cells
+            .iter()
+            .position(|cell| cell.revealed)
+            .unwrap();
+        let mine_idx = bad_revealed_mine
+            .cells
+            .iter()
+            .position(|cell| cell.mine)
+            .unwrap();
+        bad_revealed_mine.cells[revealed_idx].mine = true;
+        bad_revealed_mine.cells[mine_idx].mine = false;
+        assert!(bad_revealed_mine.into_restored().is_none());
+
+        // Tampered: already won (all safe cells revealed).
+        let mut already_won = saved.clone();
+        for cell in &mut already_won.cells {
+            if !cell.mine {
+                cell.revealed = true;
+            }
+        }
+        assert!(already_won.into_restored().is_none());
+
+        // Tampered: zero revealed cells.
+        let mut unstarted = saved;
+        for cell in &mut unstarted.cells {
+            cell.revealed = false;
+        }
+        assert!(unstarted.into_restored().is_none());
+
         let _ = fs::remove_dir_all(&dir);
     }
 }

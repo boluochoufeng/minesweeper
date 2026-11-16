@@ -91,7 +91,14 @@ fn animate_transitions(
             continue;
         }
 
-        transition.elapsed += time.delta_secs();
+        // Render the initial keyframe on insertion and clamp wakeup deltas so
+        // animations stay smooth when resuming from reactive idle sleep.
+        let dt = if transition.is_added() {
+            0.0
+        } else {
+            time.delta_secs().min(1.0 / 30.0)
+        };
+        transition.elapsed += dt;
         let linear =
             ((transition.elapsed - transition.delay) / transition.duration).clamp(0.0, 1.0);
         let eased = easing(linear, transition.easing);

@@ -8,6 +8,7 @@ use crate::assets::{
     legacy,
 };
 use crate::game::{Board, Cell, Mark, Outcome};
+use crate::input::primary_modifier_pressed;
 use crate::state::{CellAction, GameSession, PendingAction, Screen};
 use crate::storage::{Scores, Settings};
 use crate::theme::{ThemePalette, tokens};
@@ -20,7 +21,7 @@ use crate::ui::style::{self, FONT_DISPLAY, RADIUS_CELL};
 use bevy::feathers::controls::{ButtonVariant, FeathersButton};
 use bevy::feathers::display::ThemedIcon;
 use bevy::feathers::theme::{ThemeBackgroundColor, ThemeBorderColor, ThemeTextColor, ThemedText};
-use bevy::picking::events::{PointerClick, PointerPress, PointerRelease};
+use bevy::picking::events::{PointerClick, PointerOut, PointerOver, PointerPress, PointerRelease};
 use bevy::prelude::*;
 use bevy::state::state_scoped::DespawnOnExit;
 use bevy::text::LineHeight;
@@ -40,13 +41,32 @@ pub struct CellIndex {
 #[derive(Component, Default, Clone)]
 pub struct BoardGrid;
 
+/// Marker on numbered cell text nodes so window resizing can rescale them in place.
+#[derive(Component, Default, Clone, Copy)]
+struct CellNumberText;
+
+/// Per-cell transient visual flags (selection, hover, press/chord preview, over-flag warning).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CellVisual {
+    pub selected: bool,
+    pub hovered: bool,
+    pub pressed: bool,
+    pub flag_warning: bool,
+}
+
+/// Active mouse hover index for board cells.
+#[derive(Resource, Default, Debug, Clone, Copy)]
+pub struct BoardPointerState {
+    pub hovered: Option<usize>,
+}
+
 /// Entity handles and change-tracking state for the live board.
 #[derive(Resource)]
 pub struct BoardView {
     pub grid: Entity,
     pub cells: Vec<Entity>,
     pub last: Vec<Cell>,
-    pub last_cursor: Option<usize>,
+    pub last_visual: Vec<CellVisual>,
     pub last_cell_size: f32,
     pub last_outcome: Outcome,
     pub style: BoardStyle,
@@ -75,6 +95,7 @@ impl Plugin for BoardScreenPlugin {
         app.init_resource::<PauseOverlay>()
             .init_resource::<BoardScreenRoot>()
             .init_resource::<TouchHold>()
+            .init_resource::<BoardPointerState>()
             .add_systems(OnEnter(Screen::Playing), spawn_game_screen)
             .add_systems(OnExit(Screen::Playing), clear_board_state)
             .add_systems(
@@ -89,6 +110,12 @@ impl Plugin for BoardScreenPlugin {
                 )
                     .chain(),
             )
+            .add_systems(
+                Update,
+                sync_board_subtitle.run_if(in_state(Screen::Playing)),
+            )
+            .add_observer(cell_hovered)
+            .add_observer(cell_unhovered)
             .add_observer(cell_clicked)
             .add_observer(cell_pressed)
             .add_observer(cell_released);
@@ -99,10 +126,12 @@ fn clear_board_state(
     mut commands: Commands,
     mut overlay: ResMut<PauseOverlay>,
     mut root: ResMut<BoardScreenRoot>,
+    mut pointer: ResMut<BoardPointerState>,
 ) {
     commands.remove_resource::<BoardView>();
     root.0 = None;
     overlay.0 = None;
+    pointer.hovered = None;
 }
 
 fn spawn_game_screen(
@@ -137,13 +166,7 @@ fn game_screen(
 ) -> impl Scene {
     let paused = session.paused;
     let pause_action = UiAction::TogglePause;
-    let subtitle = format!(
-        "{} · {} × {} · {} 雷",
-        settings.difficulty.label(),
-        board.width,
-        board.height,
-        board.mine_count
-    );
+    let subtitle = board_subtitle(settings, board);
     let back = style::icon_button(
         assets.icons.back.clone(),
         UiAction::Pending(PendingAction::ShowNewGame),
@@ -237,9 +260,12 @@ fn pause_header_button_scene(icon: Handle<Image>, action: UiAction, label: Strin
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn setup_board(
     mut commands: Commands,
     grids: Query<Entity, Added<BoardGrid>>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    metrics: Res<UiMetrics>,
     session: Res<GameSession>,
     settings: Res<Settings>,
     assets: Res<GameAssets>,
@@ -248,11 +274,23 @@ fn setup_board(
     let Some(board) = session.board.as_ref() else {
         return;
     };
+    let initial_cell_size = windows
+        .single()
+        .map(|window| compute_cell_size(board, window, &metrics))
+        .unwrap_or(28.0);
     let style = BoardStyle::parse(&settings.theme);
     for grid in &grids {
         let mut cells = Vec::with_capacity(board.cells.len());
         for index in 0..board.cells.len() {
-            let entity = spawn_cell(&mut commands, board, index, style, &palette.0, &assets);
+            let entity = spawn_cell(
+                &mut commands,
+                board,
+                index,
+                style,
+                &palette.0,
+                &assets,
+                initial_cell_size,
+            );
             cells.push(entity);
         }
         commands.entity(grid).add_children(&cells);
@@ -263,11 +301,63 @@ fn setup_board(
             grid,
             cells,
             last: board.cells.clone(),
-            last_cursor: None,
+            last_visual: vec![CellVisual::default(); board.cells.len()],
             last_cell_size: 0.0,
             last_outcome: board.outcome,
             style,
         });
+    }
+}
+
+fn compute_cell_size(board: &Board, window: &Window, metrics: &UiMetrics) -> f32 {
+    let scale = window.scale_factor();
+    let available_width = (window.width() - 2.0 * metrics.content_pad()).max(120.0);
+    let available_height = (window.height()
+        - metrics.header_height()
+        - metrics.status_height()
+        - 3.0 * metrics.content_pad())
+    .max(120.0);
+    ((available_width / board.width as f32).min(available_height / board.height as f32) * scale)
+        .floor()
+        .max(6.0)
+        / scale
+}
+
+fn cell_font_px(cell_size: f32) -> f32 {
+    let base = if cell_size > 0.0 { cell_size } else { 28.0 };
+    (base * 0.62).max(8.0)
+}
+
+fn cell_accessible_label(cell: Cell, board: &Board, index: usize) -> String {
+    let (x, y) = board.coords(index);
+    let row = y + 1;
+    let col = x + 1;
+    if board.outcome == Outcome::Lost {
+        if board.exploded_cell == Some(index) {
+            return format!("第 {row} 行第 {col} 列，触雷爆炸");
+        }
+        if cell.mark == Mark::Flag && !cell.mine {
+            return format!("第 {row} 行第 {col} 列，错误插旗");
+        }
+        if cell.mine && cell.mark != Mark::Flag {
+            return format!("第 {row} 行第 {col} 列，地雷");
+        }
+    }
+    if cell.revealed {
+        if cell.adjacent == 0 {
+            format!("第 {row} 行第 {col} 列，已翻开，空白")
+        } else {
+            format!(
+                "第 {row} 行第 {col} 列，已翻开，周围 {} 个雷",
+                cell.adjacent
+            )
+        }
+    } else {
+        match cell.mark {
+            Mark::None => format!("第 {row} 行第 {col} 列，未翻开"),
+            Mark::Flag => format!("第 {row} 行第 {col} 列，已插旗"),
+            Mark::Maybe => format!("第 {row} 行第 {col} 列，问号标记"),
+        }
     }
 }
 
@@ -288,17 +378,21 @@ fn spawn_cell(
     style: BoardStyle,
     palette: &crate::theme::palette::Palette,
     assets: &GameAssets,
+    cell_size: f32,
 ) -> Entity {
     let cell = board.cells[index];
-    let (background, border, width) = cell_colors(cell, board, index, style, palette, false);
+    let (background, border, width) =
+        cell_colors(cell, board, index, style, palette, CellVisual::default());
     let radius = if style.is_modern() {
         rem(RADIUS_CELL)
     } else {
         px(0.0)
     };
-    let content = cell_content(cell, board, index, style, palette, assets);
+    let label = cell_accessible_label(cell, board, index);
+    let content = cell_content(cell, board, index, style, palette, assets, cell_size);
     let mut entity = commands.spawn((
         CellIndex { index },
+        AccessibleLabel(label),
         Node {
             width: percent(100),
             height: percent(100),
@@ -359,6 +453,7 @@ fn cell_content(
     style: BoardStyle,
     palette: &crate::theme::palette::Palette,
     assets: &GameAssets,
+    cell_size: f32,
 ) -> Box<dyn SceneList> {
     if let Some(glyph) = cell_glyph(cell, board, index) {
         let handle = if style.is_modern() {
@@ -374,15 +469,23 @@ fn cell_content(
         });
     }
     if cell.revealed && !cell.mine && cell.adjacent > 0 {
+        if style == BoardStyle::GnomeModern {
+            let handle = assets.gnome_modern_number(cell.adjacent);
+            return Box::new(bsn_list! {
+                ImageNode { image: {handle}, color: Color::WHITE }
+                Node { width: percent(68), height: percent(68) }
+                Pickable::IGNORE
+            });
+        }
         let number = cell.adjacent.to_string();
         let color = if style.is_modern() {
             palette.number_colors[(cell.adjacent - 1) as usize]
         } else {
-            legacy::number_color(cell.adjacent)
+            legacy::number_color(style, cell.adjacent)
         };
-        let max_dim = board.width.max(board.height).max(1);
-        let font_size = FontSize::VMin(46.0 / max_dim as f32);
+        let font_size = FontSize::Px(cell_font_px(cell_size));
         return Box::new(bsn_list! {
+            CellNumberText
             Text({number})
             TextFont { font_size: {font_size} }
             LineHeight::RelativeToFont(0.85)
@@ -399,45 +502,73 @@ fn cell_colors(
     index: usize,
     style: BoardStyle,
     palette: &crate::theme::palette::Palette,
-    selected: bool,
+    visual: CellVisual,
 ) -> (Color, Color, f32) {
     if style.is_modern() {
         let background = if board.outcome == Outcome::Lost && board.exploded_cell == Some(index) {
             palette.cell_exploded_bg
-        } else if board.outcome == Outcome::Lost && cell.mark == Mark::Flag && !cell.mine {
+        } else if (board.outcome == Outcome::Lost && cell.mark == Mark::Flag && !cell.mine)
+            || (cell.revealed && visual.flag_warning)
+        {
             palette.cell_wrong_bg
         } else if cell.revealed {
             palette.cell_revealed
+        } else if visual.pressed {
+            palette.cell_hidden_pressed
+        } else if visual.hovered {
+            palette.cell_hidden_hover
         } else {
             palette.cell_hidden
         };
-        let border = if selected {
+        let border = if visual.selected {
             palette.cell_cursor
+        } else if visual.flag_warning {
+            palette.danger
+        } else if cell.revealed {
+            palette.cell_revealed_border
         } else {
             palette.cell_border
         };
-        let width = if selected {
-            2.5
+        let width = if visual.selected {
+            if palette.high_contrast { 3.0 } else { 2.5 }
+        } else if visual.flag_warning {
+            2.0
         } else if palette.high_contrast {
-            1.5
+            if cell.revealed { 1.0 } else { 2.0 }
         } else {
             1.0
         };
         (background, border, width)
     } else {
-        let background = if cell.revealed {
-            legacy::REVEALED
+        let background = if board.outcome == Outcome::InProgress {
+            if cell.revealed && visual.flag_warning {
+                legacy::WARNING_BG
+            } else if !cell.revealed && visual.pressed {
+                legacy::HIDDEN_PRESSED
+            } else if !cell.revealed && visual.hovered {
+                legacy::HIDDEN_HOVER
+            } else {
+                legacy::cell_background(style, cell, board, index)
+            }
         } else {
-            legacy::HIDDEN
+            legacy::cell_background(style, cell, board, index)
         };
-        let border = if selected {
+        let border = if visual.selected {
             legacy::CURSOR
+        } else if visual.flag_warning {
+            legacy::WARNING_BORDER
         } else if cell.revealed {
             legacy::BORDER_REVEALED
         } else {
             legacy::BORDER_HIDDEN
         };
-        let width = if selected { 2.5 } else { 0.75 };
+        let width = if visual.selected {
+            2.5
+        } else if visual.flag_warning {
+            1.75
+        } else {
+            0.75
+        };
         (background, border, width)
     }
 }
@@ -448,6 +579,7 @@ fn fit_board(
     windows: Query<&Window, With<PrimaryWindow>>,
     metrics: Res<UiMetrics>,
     mut grids: Query<&mut Node, With<BoardGrid>>,
+    mut number_fonts: Query<&mut TextFont, With<CellNumberText>>,
 ) {
     let Some(mut view) = view else {
         return;
@@ -458,18 +590,7 @@ fn fit_board(
     let Ok(window) = windows.single() else {
         return;
     };
-    let scale = window.scale_factor();
-    let available_width = (window.width() - 2.0 * metrics.content_pad()).max(120.0);
-    let available_height = (window.height()
-        - metrics.header_height()
-        - metrics.status_height()
-        - 3.0 * metrics.content_pad())
-    .max(120.0);
-    let cell = ((available_width / board.width as f32).min(available_height / board.height as f32)
-        * scale)
-        .floor()
-        .max(6.0)
-        / scale;
+    let cell = compute_cell_size(board, window, &metrics);
     if (cell - view.last_cell_size).abs() < 0.5 {
         return;
     }
@@ -484,6 +605,10 @@ fn fit_board(
         node.grid_template_rows =
             RepeatedGridTrack::px::<Vec<RepeatedGridTrack>>(board.height as u16, cell);
     }
+    let font_size = FontSize::Px(cell_font_px(cell));
+    for mut font in &mut number_fonts {
+        font.font_size = font_size;
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -492,6 +617,9 @@ fn sync_board(
     settings: Res<Settings>,
     palette: Res<ThemePalette>,
     assets: Res<GameAssets>,
+    pointer: Res<BoardPointerState>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    keyboard: Res<ButtonInput<KeyCode>>,
     view: Option<ResMut<BoardView>>,
     mut commands: Commands,
     mut cells: Query<
@@ -532,19 +660,64 @@ fn sync_board(
         grid_bg.0 = grid_background(view.style, &palette.0);
     }
 
+    let interactive =
+        board.outcome == Outcome::InProgress && !session.paused && session.dialog.is_none();
+    let mod_pressed = primary_modifier_pressed(&keyboard);
+    let left_held = mouse.pressed(MouseButton::Left) && !mod_pressed;
+    let middle_held = mouse.pressed(MouseButton::Middle);
+    let both_lr_held = mouse.pressed(MouseButton::Left) && mouse.pressed(MouseButton::Right);
+    let press_active = interactive && (left_held || middle_held || both_lr_held);
+    let hovered_index = pointer
+        .hovered
+        .filter(|&i| interactive && i < board.cells.len());
+
+    // Precompute which cells show a depressed preview (single hidden press or
+    // 8-neighbour chord preview around a held revealed number).
+    let mut chord_anchor: Option<(usize, usize)> = None;
+    let mut direct_press: Option<usize> = None;
+    let mut direct_hover: Option<usize> = None;
+    if let Some(h) = hovered_index {
+        let hc = board.cells[h];
+        if press_active {
+            if hc.revealed && !hc.mine && hc.adjacent > 0 {
+                chord_anchor = Some(board.coords(h));
+            } else if !hc.revealed && hc.mark != Mark::Flag && left_held && !both_lr_held {
+                direct_press = Some(h);
+            }
+        } else if !hc.revealed {
+            direct_hover = Some(h);
+        }
+    }
+
     for index in 0..board.cells.len() {
         let cell = board.cells[index];
-        let changed = palette_changed || outcome_changed || cell != view.last[index] || {
-            let was_selected = view.last_cursor == Some(index);
-            let is_selected = cursor == Some(index);
-            was_selected != is_selected
+        let pressed = if direct_press == Some(index) {
+            true
+        } else if let Some((ax, ay)) = chord_anchor
+            && !cell.revealed
+            && cell.mark != Mark::Flag
+        {
+            let (cx, cy) = board.coords(index);
+            (cx as i32 - ax as i32).abs() <= 1
+                && (cy as i32 - ay as i32).abs() <= 1
+                && (cx, cy) != (ax, ay)
+        } else {
+            false
         };
+        let visual = CellVisual {
+            selected: cursor == Some(index),
+            hovered: direct_hover == Some(index),
+            pressed,
+            flag_warning: board.outcome == Outcome::InProgress && board.has_flag_warning(index),
+        };
+        let cell_changed = cell != view.last[index];
+        let visual_changed = visual != view.last_visual[index];
+        let changed = palette_changed || outcome_changed || cell_changed || visual_changed;
         if !changed {
             continue;
         }
-        let selected = cursor == Some(index);
         let (background, border, width) =
-            cell_colors(cell, board, index, view.style, &palette.0, selected);
+            cell_colors(cell, board, index, view.style, &palette.0, visual);
         if let Ok((_, mut background_color, mut border_color, mut node)) =
             cells.get_mut(view.cells[index])
         {
@@ -558,25 +731,40 @@ fn sync_board(
                 node.border = UiRect::all(px(width));
             }
         }
-        let was_changed_state = cell != view.last[index] || outcome_changed || palette_changed;
-        if was_changed_state {
-            let content = cell_content(cell, board, index, view.style, &palette.0, &assets);
+        let cell_state_changed = cell_changed || outcome_changed;
+        if cell_state_changed || palette_changed {
+            let content = cell_content(
+                cell,
+                board,
+                index,
+                view.style,
+                &palette.0,
+                &assets,
+                view.last_cell_size,
+            );
             commands.entity(view.cells[index]).despawn_children();
             commands
                 .entity(view.cells[index])
+                .insert(AccessibleLabel(cell_accessible_label(cell, board, index)))
                 .queue_spawn_related_scenes::<Children>(content);
-            if !reduced_motion {
+            if !reduced_motion && cell_state_changed {
                 let exploded = board.exploded_cell == Some(index);
                 commands
                     .entity(view.cells[index])
                     .insert(UiTransition::cell(true, exploded));
             }
         }
+        if cell_changed {
+            view.last[index] = cell;
+        }
+        if visual_changed {
+            view.last_visual[index] = visual;
+        }
     }
 
-    view.last = board.cells.clone();
-    view.last_cursor = cursor;
-    view.last_outcome = board.outcome;
+    if outcome_changed {
+        view.last_outcome = board.outcome;
+    }
 }
 
 fn sync_pause_overlay(
@@ -627,6 +815,50 @@ fn sync_pause_icon(
     }
 }
 
+fn board_subtitle(settings: &Settings, board: &Board) -> String {
+    let ng = if board.placed {
+        board.no_guessing
+    } else {
+        settings.no_guessing
+    };
+    if ng {
+        format!(
+            "{} · {} × {} · {} 雷 · 无猜",
+            settings.difficulty.label(),
+            board.width,
+            board.height,
+            board.mine_count
+        )
+    } else {
+        format!(
+            "{} · {} × {} · {} 雷",
+            settings.difficulty.label(),
+            board.width,
+            board.height,
+            board.mine_count
+        )
+    }
+}
+
+fn sync_board_subtitle(
+    settings: Res<Settings>,
+    session: Res<GameSession>,
+    mut subtitles: Query<&mut Text, With<menu::HeaderSubtitleText>>,
+) {
+    if !settings.is_changed() && !session.is_changed() {
+        return;
+    }
+    let Some(board) = session.board.as_ref() else {
+        return;
+    };
+    let label = board_subtitle(&settings, board);
+    for mut text in &mut subtitles {
+        if text.0 != label {
+            text.0 = label.clone();
+        }
+    }
+}
+
 fn pause_overlay(_assets: &GameAssets, palette: &ThemePalette) -> impl Scene {
     let resume = style::text_button("继续游戏", UiAction::TogglePause, ButtonVariant::Primary);
     bsn! {
@@ -662,10 +894,41 @@ fn pause_overlay(_assets: &GameAssets, palette: &ThemePalette) -> impl Scene {
     }
 }
 
+fn cell_hovered(
+    over: On<PointerOver>,
+    cells: Query<&CellIndex>,
+    mut pointer: ResMut<BoardPointerState>,
+) {
+    if over.pointer.id.is_touch() {
+        return;
+    }
+    if let Ok(target) = cells.get(over.entity)
+        && pointer.hovered != Some(target.index)
+    {
+        pointer.hovered = Some(target.index);
+    }
+}
+
+fn cell_unhovered(
+    out: On<PointerOut>,
+    cells: Query<&CellIndex>,
+    mut pointer: ResMut<BoardPointerState>,
+) {
+    if out.pointer.id.is_touch() {
+        return;
+    }
+    if let Ok(target) = cells.get(out.entity)
+        && pointer.hovered == Some(target.index)
+    {
+        pointer.hovered = None;
+    }
+}
+
 fn cell_clicked(
     mut click: On<PointerClick>,
     cells: Query<&CellIndex>,
     keyboard: Res<ButtonInput<KeyCode>>,
+    mouse: Res<ButtonInput<MouseButton>>,
     mut session: ResMut<GameSession>,
     settings: Res<Settings>,
     mut scores: ResMut<Scores>,
@@ -678,16 +941,21 @@ fn cell_clicked(
     };
     click.propagate(false);
     session.keyboard_active = false;
+    session.keyboard_cursor = target.index;
     let Some(board) = session.board.as_ref() else {
         return;
     };
     let (x, y) = board.coords(target.index);
-    let ctrl_pressed =
-        keyboard.pressed(KeyCode::ControlLeft) || keyboard.pressed(KeyCode::ControlRight);
+    let revealed = board.cells[target.index].revealed;
+    let mod_pressed = primary_modifier_pressed(&keyboard);
     let action = match click.button {
+        PointerButton::Middle if revealed => CellAction::Chord(x, y),
+        PointerButton::Secondary if revealed && mouse.pressed(MouseButton::Left) => {
+            CellAction::Chord(x, y)
+        }
         PointerButton::Secondary => CellAction::Mark(x, y),
-        PointerButton::Primary if ctrl_pressed => CellAction::Mark(x, y),
-        PointerButton::Primary if board.cells[target.index].revealed => CellAction::Chord(x, y),
+        PointerButton::Primary if mod_pressed => CellAction::Mark(x, y),
+        PointerButton::Primary if revealed => CellAction::Chord(x, y),
         PointerButton::Primary => CellAction::Reveal(x, y),
         _ => return,
     };
@@ -727,6 +995,7 @@ fn cell_released(
     }
     release.propagate(false);
     session.keyboard_active = false;
+    session.keyboard_cursor = target.index;
     let Some(board) = session.board.as_ref() else {
         return;
     };

@@ -3,8 +3,10 @@
 // Declarative UI commands. Widgets carry an `ActionTarget`; one observer handles
 // all of them so screens and dialogs stay free of game-flow logic.
 
-use crate::state::{DialogKind, GameSession, PendingAction, Screen};
-use crate::storage::{Scores, Settings, save_progress};
+use crate::state::{
+    DialogKind, GameSession, PendingAction, Screen, resolve_saved_game, resume_from_slot,
+};
+use crate::storage::{SavedGameSlot, Scores, Settings, save_progress};
 use bevy::app::AppExit;
 use bevy::prelude::*;
 use bevy::settings::SaveSettingsSync;
@@ -17,8 +19,8 @@ pub enum UiAction {
     None,
     /// Request a deferred action (may ask for confirmation).
     Pending(PendingAction),
-    /// Open the custom board editor.
-    ShowCustom,
+    /// Resume the saved in-progress game from disk/slot.
+    ResumeSavedGame,
     /// Pause or resume the clock.
     TogglePause,
     /// Open a dialog overlay.
@@ -49,12 +51,14 @@ impl Plugin for ActionsPlugin {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_ui_action(
     activate: On<Activate>,
     targets: Query<&ActionTarget>,
     mut session: ResMut<GameSession>,
     mut settings: ResMut<Settings>,
     scores: Res<Scores>,
+    mut saved_slot: ResMut<SavedGameSlot>,
     mut next: ResMut<NextState<Screen>>,
     mut commands: Commands,
 ) {
@@ -64,16 +68,24 @@ fn handle_ui_action(
     match target.action {
         UiAction::None => {}
         UiAction::Pending(action) => session.request(action, &mut settings, &mut next),
-        UiAction::ShowCustom => session.show_custom_board(&mut next),
-        UiAction::TogglePause => session.toggle_pause(),
-        UiAction::Open(kind) => {
-            if matches!(kind, DialogKind::Victory) && session.dialog.is_none() {
-                // Victory dialogs are opened by the outcome system, not by widgets.
-            }
-            session.dialog = Some(kind);
+        UiAction::ResumeSavedGame => {
+            resume_from_slot(
+                &mut session,
+                &mut saved_slot,
+                &mut settings,
+                &scores,
+                &mut next,
+            );
         }
+        UiAction::TogglePause => session.toggle_pause(),
+        UiAction::Open(kind) => session.open_dialog(kind),
         UiAction::CloseDialog => session.close_dialog(),
-        UiAction::AcceptConfirm => session.accept_confirm(&mut settings, &mut next),
+        UiAction::AcceptConfirm => {
+            session.accept_confirm(&mut settings, &mut next);
+            if saved_slot.0.take().is_some() {
+                save_progress(&scores.0, None);
+            }
+        }
         UiAction::HelpPrevious => {
             session.help_page = session.help_page.saturating_sub(1);
         }
@@ -82,7 +94,8 @@ fn handle_ui_action(
                 (session.help_page + 1).min(crate::ui::dialogs::HELP_PAGE_COUNT - 1);
         }
         UiAction::Quit => {
-            save_progress(&settings, &scores.0);
+            let saved = resolve_saved_game(&session, &settings, &mut saved_slot);
+            save_progress(&scores.0, saved);
             commands.queue(SaveSettingsSync::IfChanged);
             commands.write_message(AppExit::Success);
         }

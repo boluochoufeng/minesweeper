@@ -59,13 +59,40 @@ impl BoardStyle {
 
 /// Legacy flat palette of the GNOME Mines look, used by the classic styles.
 pub mod legacy {
+    use super::BoardStyle;
+    use crate::game::{Board, Cell, Mark, Outcome};
     use bevy::prelude::Color;
 
-    pub const HIDDEN: Color = Color::srgb(0.82, 0.82, 0.82);
-    pub const REVEALED: Color = Color::srgb(0.96, 0.96, 0.95);
-    pub const BORDER_HIDDEN: Color = Color::srgb(0.66, 0.66, 0.66);
-    pub const BORDER_REVEALED: Color = Color::srgb(0.78, 0.78, 0.78);
+    pub const HIDDEN: Color = Color::srgb_u8(0xba, 0xbd, 0xb6);
+    pub const HIDDEN_HOVER: Color = Color::srgb_u8(0xd3, 0xd7, 0xcf);
+    pub const HIDDEN_PRESSED: Color = Color::srgb_u8(0x88, 0x8a, 0x85);
+    pub const REVEALED: Color = Color::srgb_u8(0xde, 0xde, 0xdc);
+    pub const BORDER_HIDDEN: Color = Color::srgb_u8(0x88, 0x8a, 0x85);
+    pub const BORDER_REVEALED: Color = Color::srgb_u8(0xba, 0xbd, 0xb6);
     pub const CURSOR: Color = Color::srgb(0.13, 0.45, 0.86);
+    pub const MONOCHROME_NUMBER: Color = Color::srgb_u8(0x2e, 0x34, 0x36);
+    pub const WARNING_BG: Color = Color::srgb_u8(0xf8, 0xd4, 0xd4);
+    pub const WARNING_BORDER: Color = Color::srgb_u8(0xcc, 0x00, 0x00);
+
+    const EXPLODED_HIDDEN: Color = Color::srgb_u8(0x88, 0x8a, 0x85);
+    const EXPLODED_HIDDEN_MODERN: Color = Color::srgb_u8(0x9a, 0x99, 0x96);
+    const EXPLODED_REVEALED: Color = Color::srgb_u8(0xd3, 0xd7, 0xcf);
+    const EXPLODED_REVEALED_MODERN: Color = Color::srgb_u8(0xc0, 0xbf, 0xbc);
+    const EXPLODED_CELL_MODERN: Color = Color::srgb_u8(0xf5, 0xc2, 0x11);
+    const INCORRECT_BG: Color = Color::srgb_u8(0xcc, 0x00, 0x00);
+
+    /// Heatmap backgrounds from GNOME Mines `bgcolors/theme.css`.
+    pub const BGCOLORS_TILES: [Color; 8] = [
+        Color::srgb_u8(0xdd, 0xfa, 0xc3),
+        Color::srgb_u8(0xec, 0xed, 0xbf),
+        Color::srgb_u8(0xed, 0xda, 0xb4),
+        Color::srgb_u8(0xed, 0xc3, 0x8a),
+        Color::srgb_u8(0xf7, 0xa1, 0xa2),
+        Color::srgb_u8(0xfe, 0xa7, 0x85),
+        Color::srgb_u8(0xff, 0x7d, 0x60),
+        Color::srgb_u8(0xff, 0x32, 0x3c),
+    ];
+
     pub const NUMBER_COLORS: [(u8, u8, u8); 8] = [
         (0x1a, 0x5f, 0xb4),
         (0x21, 0x8b, 0x55),
@@ -77,26 +104,63 @@ pub mod legacy {
         (0x3d, 0x38, 0x46),
     ];
 
-    pub fn number_color(number: u8) -> Color {
-        let (red, green, blue) = NUMBER_COLORS[(number.clamp(1, 8) - 1) as usize];
-        Color::srgb(
-            red as f32 / 255.0,
-            green as f32 / 255.0,
-            blue as f32 / 255.0,
-        )
+    pub fn number_color(style: BoardStyle, number: u8) -> Color {
+        match style {
+            BoardStyle::BgColors | BoardStyle::Default => MONOCHROME_NUMBER,
+            _ => {
+                let (red, green, blue) = NUMBER_COLORS[(number.clamp(1, 8) - 1) as usize];
+                Color::srgb_u8(red, green, blue)
+            }
+        }
+    }
+
+    pub fn bgcolor_tile(number: u8) -> Color {
+        BGCOLORS_TILES[(number.clamp(1, 8) - 1) as usize]
+    }
+
+    pub fn cell_background(style: BoardStyle, cell: Cell, board: &Board, index: usize) -> Color {
+        if board.outcome == Outcome::Lost {
+            if board.exploded_cell == Some(index) {
+                return if style == BoardStyle::GnomeModern {
+                    EXPLODED_CELL_MODERN
+                } else {
+                    EXPLODED_REVEALED
+                };
+            }
+            if !cell.revealed && cell.mark == Mark::Flag && !cell.mine {
+                return INCORRECT_BG;
+            }
+            if !cell.revealed {
+                return if style == BoardStyle::GnomeModern {
+                    EXPLODED_HIDDEN_MODERN
+                } else {
+                    EXPLODED_HIDDEN
+                };
+            }
+            if style == BoardStyle::BgColors && !cell.mine && cell.adjacent > 0 {
+                return bgcolor_tile(cell.adjacent);
+            }
+            return if style == BoardStyle::GnomeModern {
+                EXPLODED_REVEALED_MODERN
+            } else {
+                EXPLODED_REVEALED
+            };
+        }
+
+        if cell.revealed {
+            if style == BoardStyle::BgColors && !cell.mine && cell.adjacent > 0 {
+                bgcolor_tile(cell.adjacent)
+            } else {
+                REVEALED
+            }
+        } else {
+            HIDDEN
+        }
     }
 }
 
-const TILE_SVGS: [[&[u8]; 13]; 4] = [
+const TILE_SVGS: [[&[u8]; 5]; 4] = [
     [
-        include_bytes!("../assets/themes/bgcolors/1mines.svg"),
-        include_bytes!("../assets/themes/bgcolors/2mines.svg"),
-        include_bytes!("../assets/themes/bgcolors/3mines.svg"),
-        include_bytes!("../assets/themes/bgcolors/4mines.svg"),
-        include_bytes!("../assets/themes/bgcolors/5mines.svg"),
-        include_bytes!("../assets/themes/bgcolors/6mines.svg"),
-        include_bytes!("../assets/themes/bgcolors/7mines.svg"),
-        include_bytes!("../assets/themes/bgcolors/8mines.svg"),
         include_bytes!("../assets/themes/bgcolors/mine.svg"),
         include_bytes!("../assets/themes/bgcolors/exploded.svg"),
         include_bytes!("../assets/themes/bgcolors/flag.svg"),
@@ -104,14 +168,6 @@ const TILE_SVGS: [[&[u8]; 13]; 4] = [
         include_bytes!("../assets/themes/bgcolors/maybe.svg"),
     ],
     [
-        include_bytes!("../assets/themes/classic/1mines.svg"),
-        include_bytes!("../assets/themes/classic/2mines.svg"),
-        include_bytes!("../assets/themes/classic/3mines.svg"),
-        include_bytes!("../assets/themes/classic/4mines.svg"),
-        include_bytes!("../assets/themes/classic/5mines.svg"),
-        include_bytes!("../assets/themes/classic/6mines.svg"),
-        include_bytes!("../assets/themes/classic/7mines.svg"),
-        include_bytes!("../assets/themes/classic/8mines.svg"),
         include_bytes!("../assets/themes/classic/mine.svg"),
         include_bytes!("../assets/themes/classic/exploded.svg"),
         include_bytes!("../assets/themes/classic/flag.svg"),
@@ -119,14 +175,6 @@ const TILE_SVGS: [[&[u8]; 13]; 4] = [
         include_bytes!("../assets/themes/classic/maybe.svg"),
     ],
     [
-        include_bytes!("../assets/themes/default/1mines.svg"),
-        include_bytes!("../assets/themes/default/2mines.svg"),
-        include_bytes!("../assets/themes/default/3mines.svg"),
-        include_bytes!("../assets/themes/default/4mines.svg"),
-        include_bytes!("../assets/themes/default/5mines.svg"),
-        include_bytes!("../assets/themes/default/6mines.svg"),
-        include_bytes!("../assets/themes/default/7mines.svg"),
-        include_bytes!("../assets/themes/default/8mines.svg"),
         include_bytes!("../assets/themes/default/mine.svg"),
         include_bytes!("../assets/themes/default/exploded.svg"),
         include_bytes!("../assets/themes/default/flag.svg"),
@@ -134,20 +182,23 @@ const TILE_SVGS: [[&[u8]; 13]; 4] = [
         include_bytes!("../assets/themes/default/maybe.svg"),
     ],
     [
-        include_bytes!("../assets/themes/modern/1mines.svg"),
-        include_bytes!("../assets/themes/modern/2mines.svg"),
-        include_bytes!("../assets/themes/modern/3mines.svg"),
-        include_bytes!("../assets/themes/modern/4mines.svg"),
-        include_bytes!("../assets/themes/modern/5mines.svg"),
-        include_bytes!("../assets/themes/modern/6mines.svg"),
-        include_bytes!("../assets/themes/modern/7mines.svg"),
-        include_bytes!("../assets/themes/modern/8mines.svg"),
         include_bytes!("../assets/themes/modern/mine.svg"),
         include_bytes!("../assets/themes/modern/exploded.svg"),
         include_bytes!("../assets/themes/modern/flag.svg"),
         include_bytes!("../assets/themes/modern/incorrect.svg"),
         include_bytes!("../assets/themes/modern/maybe.svg"),
     ],
+];
+
+const GNOME_MODERN_NUMBER_SVGS: [&[u8]; 8] = [
+    include_bytes!("../assets/themes/modern/1mines.svg"),
+    include_bytes!("../assets/themes/modern/2mines.svg"),
+    include_bytes!("../assets/themes/modern/3mines.svg"),
+    include_bytes!("../assets/themes/modern/4mines.svg"),
+    include_bytes!("../assets/themes/modern/5mines.svg"),
+    include_bytes!("../assets/themes/modern/6mines.svg"),
+    include_bytes!("../assets/themes/modern/7mines.svg"),
+    include_bytes!("../assets/themes/modern/8mines.svg"),
 ];
 
 /// Chrome and board icons, drawn as white shapes so they can be tinted per theme.
@@ -192,6 +243,8 @@ pub struct ModernGlyphs {
 pub struct GameAssets {
     /// Classic board glyphs per theme, indexed by [`BoardStyle::glyph_set`].
     pub classic: Vec<Vec<Handle<Image>>>,
+    /// Vector gradient number glyphs (`1..=8`) for the GNOME Modern board style.
+    pub gnome_modern_numbers: [Handle<Image>; 8],
     pub modern: ModernGlyphs,
     pub icons: UiIcons,
 }
@@ -199,6 +252,10 @@ pub struct GameAssets {
 impl GameAssets {
     pub fn classic_glyph(&self, style: BoardStyle, glyph: usize) -> Handle<Image> {
         self.classic[style.glyph_set()][glyph].clone()
+    }
+
+    pub fn gnome_modern_number(&self, number: u8) -> Handle<Image> {
+        self.gnome_modern_numbers[(number.clamp(1, 8) - 1) as usize].clone()
     }
 
     pub fn modern_glyph(&self, glyph: usize) -> Handle<Image> {
@@ -227,18 +284,22 @@ impl Plugin for AssetsPlugin {
 }
 
 fn prepare_assets(images: &mut Assets<Image>) -> GameAssets {
-    let mut options = resvg::usvg::Options::default();
-    options.fontdb_mut().load_system_fonts();
+    // Every embedded board glyph and chrome icon is pure path/shape geometry,
+    // so SVG parsing needs no system font scan on the startup thread.
+    let options = resvg::usvg::Options::default();
 
     let classic: Vec<Vec<Handle<Image>>> = TILE_SVGS
         .iter()
         .map(|theme| {
-            theme[8..13]
+            theme
                 .iter()
                 .map(|bytes| images.add(svg_image(bytes, 128, &options)))
                 .collect()
         })
         .collect();
+
+    let gnome_modern_numbers =
+        GNOME_MODERN_NUMBER_SVGS.map(|bytes| images.add(svg_image(bytes, 128, &options)));
 
     let modern = ModernGlyphs {
         mine: images.add(icon_image(raw_icons::MINE, &options)),
@@ -259,6 +320,7 @@ fn prepare_assets(images: &mut Assets<Image>) -> GameAssets {
 
     GameAssets {
         classic,
+        gnome_modern_numbers,
         modern,
         icons,
     }
@@ -308,4 +370,55 @@ fn svg_image(bytes: &[u8], size: u32, options: &resvg::usvg::Options<'_>) -> Ima
         TextureFormat::Rgba8UnormSrgb,
         RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_rendered(images: &Assets<Image>, handle: &Handle<Image>, expected_size: u32) {
+        let image = images.get(handle).expect("asset handle must resolve");
+        assert_eq!(image.width(), expected_size);
+        assert_eq!(image.height(), expected_size);
+        let bytes = image.data.as_ref().expect("image pixel buffer must exist");
+        assert!(
+            bytes.as_chunks::<4>().0.iter().any(|rgba| rgba[3] > 0),
+            "rasterized SVG should contain visible non-transparent pixels"
+        );
+    }
+
+    #[test]
+    fn all_svg_assets_rasterize_without_system_fonts() {
+        let mut images = Assets::<Image>::default();
+        let assets = prepare_assets(&mut images);
+
+        for theme in &assets.classic {
+            assert_eq!(theme.len(), 5);
+            for handle in theme {
+                assert_rendered(&images, handle, 128);
+            }
+        }
+        for handle in &assets.gnome_modern_numbers {
+            assert_rendered(&images, handle, 128);
+        }
+        for handle in [
+            &assets.modern.mine,
+            &assets.modern.exploded,
+            &assets.modern.flag,
+            &assets.modern.incorrect,
+            &assets.modern.maybe,
+        ] {
+            assert_rendered(&images, handle, 64);
+        }
+        for handle in [
+            &assets.icons.menu,
+            &assets.icons.back,
+            &assets.icons.restart,
+            &assets.icons.pause,
+            &assets.icons.play,
+            &assets.icons.stopwatch,
+        ] {
+            assert_rendered(&images, handle, 64);
+        }
+    }
 }

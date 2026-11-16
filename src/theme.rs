@@ -163,8 +163,8 @@ fn sync_theme(
     // Ask the platform to paint the title bar in the matching variant.
     let window_theme = match mode {
         ThemeMode::System => None,
-        ThemeMode::Light => Some(WindowTheme::Light),
-        ThemeMode::Dark | ThemeMode::HighContrast => Some(WindowTheme::Dark),
+        ThemeMode::Light | ThemeMode::HighContrast => Some(WindowTheme::Light),
+        ThemeMode::Dark => Some(WindowTheme::Dark),
     };
     let system_theme = if window_theme.is_none() {
         window.window_theme

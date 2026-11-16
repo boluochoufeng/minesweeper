@@ -44,11 +44,28 @@ const HELP_PAGES: [(&str, &str); HELP_PAGE_COUNT] = [
     ),
 ];
 
+#[cfg(target_os = "macos")]
+const SHORTCUTS: &str = "\
+新游戏                 Cmd+N / Ctrl+N
+重新开始               Cmd+R / Ctrl+R
+暂停 / 继续            P / Pause / Esc
+帮助 / 设置 / 成绩     F1 / F2 / F3
+关于 / 快捷键 / 自定义 F4 / F5 / F6
+退出                   Cmd+Q / Cmd+W
+
+小型 / 中型 / 大型     1 / 2 / 3
+自定义                 4
+移动                   方向键或 H J K L
+揭开 / 清除周围        空格
+插旗                   Ctrl+空格 / Cmd+空格";
+
+#[cfg(not(target_os = "macos"))]
 const SHORTCUTS: &str = "\
 新游戏                 Ctrl+N
 重新开始               Ctrl+R
-暂停 / 继续            Pause
-帮助                   F1
+暂停 / 继续            P / Pause / Esc
+帮助 / 设置 / 成绩     F1 / F2 / F3
+关于 / 快捷键 / 自定义 F4 / F5 / F6
 退出                   Ctrl+Q / Ctrl+W
 
 小型 / 中型 / 大型     1 / 2 / 3
@@ -270,21 +287,28 @@ fn dialog_contents(
 ) -> Box<dyn SceneList> {
     let _ = (assets, palette);
     match kind {
-        DialogKind::Confirm(_) => frame(
-            "开始新游戏？",
-            Box::new(bsn! {
-                Node { flex_direction: FlexDirection::Column, row_gap: rem(0.4) }
-                Children [
-                    {line("当前游戏进度将会丢失。", FONT_BODY, tokens::TEXT_SECONDARY)}
-                ]
-            }),
-            footer_buttons(vec![
-                button("取消", UiAction::CloseDialog, false),
-                button("离开游戏", UiAction::AcceptConfirm, true),
-            ]),
-        ),
+        DialogKind::Confirm(state) => {
+            let (title, accept_label) = match state.action {
+                crate::state::PendingAction::Restart => ("重新开始？", "重新开始"),
+                crate::state::PendingAction::ShowCustomBoard => ("打开自定义棋盘？", "离开游戏"),
+                _ => ("开始新游戏？", "离开游戏"),
+            };
+            frame(
+                title,
+                Box::new(bsn! {
+                    Node { flex_direction: FlexDirection::Column, row_gap: rem(0.4) }
+                    Children [
+                        {line("当前游戏进度将会丢失。", FONT_BODY, tokens::TEXT_SECONDARY)}
+                    ]
+                }),
+                footer_buttons(vec![
+                    button("取消", UiAction::CloseDialog, false),
+                    button(accept_label, UiAction::AcceptConfirm, true),
+                ]),
+            )
+        }
         DialogKind::Victory => {
-            let seconds = session.clock.elapsed().as_secs_f64().round() as u64;
+            let seconds = session.elapsed_secs();
             let mut rows: Vec<Box<dyn SceneList>> = vec![line(
                 format!("你用 {} 清空了雷区。", format_time(seconds)),
                 FONT_BODY,
